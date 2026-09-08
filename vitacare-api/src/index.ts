@@ -1,8 +1,10 @@
 import 'dotenv/config'
 import 'express-async-errors'
+import { createServer } from 'node:http'
 import express from 'express'
 import cors from 'cors'
 import { aktorMiddleware } from './middleware/aktor.js'
+import { mulaiRealtime } from './lib/realtime.js'
 import { authRouter } from './routes/auth.js'
 import { masterRouter } from './routes/master.js'
 import { penggunaRouter } from './routes/pengguna.js'
@@ -34,5 +36,8 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   res.status(500).json({ ok: false, pesan })
 })
 
+const server = createServer(app)
+mulaiRealtime(server)
+
 const port = Number(process.env.PORT ?? 4010)
-app.listen(port, () => console.log(`vitacare-api jalan di http://localhost:${port}`))
+server.listen(port, () => console.log(`vitacare-api jalan di http://localhost:${port}`))

@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from 'react'
 import type { Antrian, AuditLog, Cabang, DB, Dokter, JanjiTemu, Jadwal, Notifikasi, Pengaturan, Pengguna, Peran, Poli, Prioritas, StatusAntrian } from './types'
 import { boleh } from './permissions'
+import { realtime } from './realtime'
 
 const API = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:4010/api'
 const KUNCI_TOKEN = 'vitacare.token.v1'
-const JEDA_POLING = 6000
+/** Jaring pengaman kalau WebSocket putus — jalur utama tetap event `perubahan` dari realtime.ts. */
+const JEDA_POLING_CADANGAN = 25000
 
 const KOSONG: DB = {
   versi: 3, cabang: [], poli: [], dokter: [], jadwal: [], antrian: [], janjiTemu: [],
@@ -120,14 +122,19 @@ async function muatSesi() {
 }
 
 /**
- * Muat data awal & mulai polling berkala. Ini pengganti sementara realtime
- * sungguhan (WebSocket) — cukup untuk lintas perangkat, belum instan.
- * Lihat PRD VitaCare Fase 3.
+ * Muat data awal, lalu ikuti event `perubahan` dari WebSocket (lih.
+ * lib/realtime.ts) untuk muat ulang nyaris instan lintas perangkat.
+ * Polling berkala tetap jalan sebagai jaring pengaman kalau koneksi socket
+ * sempat putus (mis. jaringan TV display sempat drop).
  */
 export function mulaiSinkronisasi(): () => void {
   void muatSesi().then(muatSemua)
-  const t = window.setInterval(() => void muatSemua(), JEDA_POLING)
-  return () => window.clearInterval(t)
+  const berhentiRealtime = realtime.langgan(() => void muatSemua())
+  const t = window.setInterval(() => void muatSemua(), JEDA_POLING_CADANGAN)
+  return () => {
+    window.clearInterval(t)
+    berhentiRealtime()
+  }
 }
 
 /* --------------------------------------------------------------- autentik */

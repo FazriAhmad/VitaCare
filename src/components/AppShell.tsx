@@ -289,20 +289,18 @@ export function tampilkanCabang(): string {
 }
 
 function IndikatorLive() {
-  const [latensi, setLatensi] = useState(0)
+  const [tersambung, setTersambung] = useState(realtime.tersambung)
   useTick(3000)
-  useEffect(() => {
-    const t = window.setInterval(() => setLatensi(realtime.latensi), 3000)
-    return () => window.clearInterval(t)
-  }, [])
+  useEffect(() => realtime.langganStatus(() => setTersambung(realtime.tersambung)), [])
+
   return (
-    <div className="hidden items-center gap-2 rounded-xl border border-brand-200/60 bg-brand-50/60 px-3 py-1.5 lg:flex">
+    <div className={cn('hidden items-center gap-2 rounded-xl border px-3 py-1.5 lg:flex', tersambung ? 'border-brand-200/60 bg-brand-50/60' : 'border-ink-200 bg-ink-50')}>
       <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-brand-400" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-brand-600" />
+        {tersambung && <span className="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-brand-400" />}
+        <span className={cn('relative inline-flex h-2 w-2 rounded-full', tersambung ? 'bg-brand-600' : 'bg-ink-400')} />
       </span>
-      <span className="text-[11px] font-semibold text-brand-700">Realtime</span>
-      <span className="text-[10px] tabular-nums text-brand-500">{latensi || 1}ms</span>
+      <span className={cn('text-[11px] font-semibold', tersambung ? 'text-brand-700' : 'text-ink-500')}>{tersambung ? 'Realtime' : 'Menyambung…'}</span>
+      {tersambung && <span className="text-[10px] tabular-nums text-brand-500">{realtime.latensi || 1}ms</span>}
     </div>
   )
 }
