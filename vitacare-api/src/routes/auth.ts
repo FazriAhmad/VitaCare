@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import { Router, type RequestHandler } from 'express'
 import bcrypt from 'bcryptjs'
 import rateLimit from 'express-rate-limit'
 import { prisma } from '../lib/prisma.js'
@@ -8,13 +8,17 @@ import { wajibMasuk } from '../middleware/otorisasi.js'
 
 export const authRouter = Router()
 
-const batasMasuk = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { ok: false, pesan: 'Terlalu banyak percobaan masuk. Coba lagi dalam beberapa menit.' },
-})
+// Nonaktif saat test: satu suite bisa login puluhan kali dalam hitungan detik
+// (tiap test butuh sesi sendiri) — bukan pola serangan credential stuffing.
+const batasMasuk: RequestHandler = process.env.NODE_ENV === 'test'
+  ? (_req, _res, next) => next()
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      limit: 10,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { ok: false, pesan: 'Terlalu banyak percobaan masuk. Coba lagi dalam beberapa menit.' },
+    })
 
 function sanitasi<T extends { passwordHash: string }>(u: T) {
   const { passwordHash, ...aman } = u

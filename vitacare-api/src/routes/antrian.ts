@@ -37,7 +37,7 @@ async function ambilNomorTx(input: {
   poliId: string; cabangId: string; dokterId?: string; nama: string; telepon: string
   alasan: string; prioritas: Prioritas; pasienId?: string
 }) {
-  const MAKS_ULANG = 5
+  const MAKS_ULANG = 12
   for (let percobaan = 0; percobaan < MAKS_ULANG; percobaan++) {
     try {
       return await prisma.$transaction(async (tx) => {
@@ -77,7 +77,11 @@ async function ambilNomorTx(input: {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable })
     } catch (err) {
       const kodeErr = (err as { code?: string }).code
-      if (kodeErr === 'P2034' && percobaan < MAKS_ULANG - 1) continue // serialization conflict -> ulangi
+      if (kodeErr === 'P2034' && percobaan < MAKS_ULANG - 1) {
+        // konflik serialisasi -> ulangi setelah jeda acak singkat, supaya percobaan ulang antar request tidak tabrakan lagi
+        await new Promise((r) => setTimeout(r, 10 + Math.random() * 40))
+        continue
+      }
       throw err
     }
   }
