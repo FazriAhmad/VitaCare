@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from 'react'
 import type { Antrian, AuditLog, Cabang, DB, Dokter, JanjiTemu, Jadwal, Notifikasi, Pengaturan, Pengguna, Peran, Poli, Prioritas, StatusAntrian } from './types'
+import { boleh } from './permissions'
 
 const API = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:4010/api'
-const KUNCI_SESI = 'vitacare.sesi.v3'
+const KUNCI_TOKEN = 'vitacare.token.v1'
 const JEDA_POLING = 6000
 
 const KOSONG: DB = {
@@ -13,11 +14,12 @@ const KOSONG: DB = {
 
 let data: DB = KOSONG
 let siap = false
-let sesiId: string | null = null
+let token: string | null = null
+let sesiPengguna: Pengguna | null = null
 try {
-  sesiId = localStorage.getItem(KUNCI_SESI)
+  token = localStorage.getItem(KUNCI_TOKEN)
 } catch {
-  sesiId = null
+  token = null
 }
 
 const pendengar = new Set<() => void>()
@@ -35,12 +37,16 @@ export function langganGalat(f: (pesan: string) => void) { pendengarGalat.add(f)
 export function getDB(): DB { return data }
 export function pakaiDB(): DB { return useSyncExternalStore(langgan, getDB, getDB) }
 export function pakaiSiap(): boolean { return useSyncExternalStore(langgan, () => siap, () => siap) }
+export function pakaiPenggunaSesi(): Pengguna | null { return useSyncExternalStore(langganSesi, () => sesiPengguna, () => sesiPengguna) }
 
-export function pakaiPenggunaSesi(): Pengguna | null {
-  useSyncExternalStore(langganSesi, () => sesiId, () => sesiId)
-  useSyncExternalStore(langgan, getDB, getDB)
-  if (!sesiId) return null
-  return data.pengguna.find((p) => p.id === sesiId) ?? null
+function aturSesi(p: Pengguna | null, t: string | null) {
+  sesiPengguna = p
+  token = t
+  try {
+    if (t) localStorage.setItem(KUNCI_TOKEN, t)
+    else localStorage.removeItem(KUNCI_TOKEN)
+  } catch { /* abaikan */ }
+  sebarSesi()
 }
 
 /* ------------------------------------------------------------------- API */
@@ -51,10 +57,11 @@ async function permintaan<T>(path: string, opsi: RequestInit = {}, senyapGalat =
       ...opsi,
       headers: {
         'Content-Type': 'application/json',
-        ...(sesiId ? { 'X-User-Id': sesiId } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(opsi.headers ?? {}),
       },
     })
+    if (res.status === 401 && sesiPengguna) aturSesi(null, null) // token kedaluwarsa/dicabut -> keluarkan
     if (res.status === 204) return undefined as T
     const isi = await res.json().catch(() => null)
     if (!res.ok) {
@@ -74,23 +81,42 @@ const post = <T,>(path: string, body?: unknown, senyap = false) => permintaan<T>
 const patch = <T,>(path: string, body?: unknown, senyap = false) => permintaan<T>(path, { method: 'PATCH', body: body !== undefined ? JSON.stringify(body) : undefined }, senyap)
 const del = <T,>(path: string, senyap = false) => permintaan<T>(path, { method: 'DELETE' }, senyap)
 
-/** Ambil ulang seluruh koleksi dari server dan sebarkan ke komponen yang berlangganan. */
+/**
+ * Ambil ulang seluruh koleksi dari server dan sebarkan ke komponen yang
+ * berlangganan. Koleksi yang butuh login (janji temu, notifikasi) atau izin
+ * admin (pengguna, audit log) hanya diminta kalau sesi saat ini memang
+ * berhak — server menolak permintaan tanpa izin, tapi tidak ada gunanya
+ * memintanya untuk tamu/pasien biasa.
+ */
 async function muatSemua() {
-  const [cabang, poli, dokter, jadwal, antrian, janjiTemu, pengguna, notifikasi, audit, pengaturan] = await Promise.all([
+  const [cabang, poli, dokter, jadwal, antrian, pengaturan] = await Promise.all([
     get<Cabang[]>('/cabang', true),
     get<Poli[]>('/poli', true),
     get<Dokter[]>('/dokter', true),
     get<Jadwal[]>('/jadwal', true),
     get<Antrian[]>('/antrian', true),
-    get<JanjiTemu[]>('/janji-temu', true),
-    get<Pengguna[]>('/pengguna', true),
-    get<Notifikasi[]>(`/notifikasi${sesiId ? `?penggunaId=${sesiId}` : ''}`, true),
-    get<AuditLog[]>('/audit', true),
     get<Pengaturan>('/pengaturan', true),
   ])
+  const [janjiTemu, notifikasi] = sesiPengguna
+    ? await Promise.all([get<JanjiTemu[]>('/janji-temu', true), get<Notifikasi[]>('/notifikasi', true)])
+    : [[], []]
+  const pengguna = boleh(sesiPengguna, 'kelola_pengguna') ? await get<Pengguna[]>('/pengguna', true) : []
+  const audit = boleh(sesiPengguna, 'lihat_audit') ? await get<AuditLog[]>('/audit', true) : []
+
   data = { versi: 3, cabang, poli, dokter, jadwal, antrian, janjiTemu, pengguna, notifikasi, audit, pengaturan }
   siap = true
   sebar()
+}
+
+/** Pulihkan sesi dari token tersimpan (kalau ada) dengan memanggil /auth/me. */
+async function muatSesi() {
+  if (!token) return
+  try {
+    sesiPengguna = await get<Pengguna>('/auth/me', true)
+    sebarSesi()
+  } catch {
+    aturSesi(null, null)
+  }
 }
 
 /**
@@ -99,7 +125,7 @@ async function muatSemua() {
  * Lihat PRD VitaCare Fase 3.
  */
 export function mulaiSinkronisasi(): () => void {
-  void muatSemua()
+  void muatSesi().then(muatSemua)
   const t = window.setInterval(() => void muatSemua(), JEDA_POLING)
   return () => window.clearInterval(t)
 }
@@ -108,11 +134,9 @@ export function mulaiSinkronisasi(): () => void {
 
 export async function masuk(email: string, sandi: string): Promise<{ ok: boolean; pesan: string }> {
   try {
-    const hasil = await post<{ ok: boolean; pesan: string; pengguna: Pengguna }>('/auth/login', { email, sandi }, true)
-    sesiId = hasil.pengguna.id
-    try { localStorage.setItem(KUNCI_SESI, sesiId) } catch { /* abaikan */ }
+    const hasil = await post<{ ok: boolean; pesan: string; token: string; pengguna: Pengguna }>('/auth/login', { email, sandi }, true)
+    aturSesi(hasil.pengguna, hasil.token)
     await muatSemua()
-    sebarSesi()
     return { ok: true, pesan: hasil.pesan }
   } catch (err) {
     return { ok: false, pesan: err instanceof Error ? err.message : 'Gagal masuk.' }
@@ -121,11 +145,9 @@ export async function masuk(email: string, sandi: string): Promise<{ ok: boolean
 
 export async function daftar(input: { nama: string; email: string; sandi: string; telepon: string; nik?: string; cabangId: string }): Promise<{ ok: boolean; pesan: string }> {
   try {
-    const hasil = await post<{ ok: boolean; pesan: string; pengguna: Pengguna }>('/auth/register', input, true)
-    sesiId = hasil.pengguna.id
-    try { localStorage.setItem(KUNCI_SESI, sesiId) } catch { /* abaikan */ }
+    const hasil = await post<{ ok: boolean; pesan: string; token: string; pengguna: Pengguna }>('/auth/register', input, true)
+    aturSesi(hasil.pengguna, hasil.token)
     await muatSemua()
-    sebarSesi()
     return { ok: true, pesan: hasil.pesan }
   } catch (err) {
     return { ok: false, pesan: err instanceof Error ? err.message : 'Gagal mendaftar.' }
@@ -133,9 +155,8 @@ export async function daftar(input: { nama: string; email: string; sandi: string
 }
 
 export function keluar() {
-  sesiId = null
-  try { localStorage.removeItem(KUNCI_SESI) } catch { /* abaikan */ }
-  sebarSesi()
+  aturSesi(null, null)
+  void muatSemua()
 }
 
 /* --------------------------------------------------------------- selector */

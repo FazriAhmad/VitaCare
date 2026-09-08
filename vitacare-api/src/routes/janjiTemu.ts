@@ -2,17 +2,23 @@ import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { catat } from '../lib/audit.js'
 import { hariIniISO, pad2 } from '../lib/util.js'
+import { boleh } from '../lib/permissions.js'
+import { wajibIzin, wajibMasuk } from '../middleware/otorisasi.js'
 
 export const janjiTemuRouter = Router()
+janjiTemuRouter.use(wajibMasuk)
 
 janjiTemuRouter.get('/', async (req, res) => {
-  const { pasienId } = req.query as { pasienId?: string }
-  res.json(await prisma.janjiTemu.findMany({ where: pasienId ? { pasienId } : undefined, orderBy: { dibuatPada: 'desc' } }))
+  const kelola = boleh(req.aktor, 'kelola_janji_temu')
+  res.json(await prisma.janjiTemu.findMany({ where: kelola ? {} : { pasienId: req.aktor!.id }, orderBy: { dibuatPada: 'desc' } }))
 })
 
 janjiTemuRouter.post('/', async (req, res) => {
   const { pasienId, dokterId, tanggal, jam, alasan, cabangId } = req.body as {
     pasienId: string; dokterId: string; tanggal: string; jam: string; alasan: string; cabangId: string
+  }
+  if (pasienId !== req.aktor!.id && !boleh(req.aktor, 'kelola_janji_temu')) {
+    return res.status(403).json({ ok: false, pesan: 'Anda hanya dapat membuat janji temu untuk diri sendiri.' })
   }
   const [pasien, dokter] = await Promise.all([
     prisma.pengguna.findUnique({ where: { id: pasienId } }),
@@ -43,6 +49,13 @@ janjiTemuRouter.post('/', async (req, res) => {
 
 janjiTemuRouter.patch('/:id/status', async (req, res) => {
   const { status } = req.body as { status: 'menunggu' | 'dikonfirmasi' | 'selesai' | 'batal' }
+  const target = await prisma.janjiTemu.findUnique({ where: { id: req.params.id } })
+  if (!target) return res.status(404).json({ pesan: 'Janji temu tidak ditemukan.' })
+
+  const kelola = boleh(req.aktor, 'kelola_janji_temu')
+  const pemilikMembatalkan = status === 'batal' && target.pasienId === req.aktor!.id
+  if (!kelola && !pemilikMembatalkan) return res.status(403).json({ ok: false, pesan: 'Anda tidak dapat mengubah janji temu ini.' })
+
   const hasil = await prisma.janjiTemu.update({ where: { id: req.params.id }, data: { status } })
   await catat(req.aktor, 'UBAH_JANJI_TEMU', 'Janji Temu', `${hasil.kode} -> ${status}`, req.ip)
   await prisma.notifikasi.create({
@@ -52,7 +65,7 @@ janjiTemuRouter.patch('/:id/status', async (req, res) => {
 })
 
 /** Konversi janji temu menjadi nomor antrian aktif hari ini. */
-janjiTemuRouter.post('/:id/ke-antrian', async (req, res) => {
+janjiTemuRouter.post('/:id/ke-antrian', wajibIzin('kelola_janji_temu'), async (req, res) => {
   const jt = await prisma.janjiTemu.findUniqueOrThrow({ where: { id: req.params.id } })
   const [poli, pasien] = await Promise.all([
     prisma.poli.findUniqueOrThrow({ where: { id: jt.poliId } }),

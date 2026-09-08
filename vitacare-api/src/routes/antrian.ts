@@ -3,6 +3,8 @@ import { Prisma, type StatusAntrian, type Prioritas } from '@prisma/client'
 import { prisma } from '../lib/prisma.js'
 import { catat } from '../lib/audit.js'
 import { hariIniISO, pad2 } from '../lib/util.js'
+import { wajibIzin } from '../middleware/otorisasi.js'
+import { boleh } from '../lib/permissions.js'
 
 export const antrianRouter = Router()
 
@@ -90,7 +92,7 @@ antrianRouter.post('/', async (req, res) => {
   res.status(201).json(antrian)
 })
 
-antrianRouter.post('/:id/panggil', async (req, res) => {
+antrianRouter.post('/:id/panggil', wajibIzin('panggil_antrian'), async (req, res) => {
   const target = await prisma.antrian.update({ where: { id: req.params.id }, data: { status: 'dipanggil', dipanggilPada: new Date() } })
   const poli = await prisma.poli.findUnique({ where: { id: target.poliId } })
   await catat(req.aktor, 'PANGGIL_ANTRIAN', 'Antrian', `Memanggil ${target.kode} ke ${poli?.ruang ?? '-'}`, req.ip)
@@ -106,7 +108,7 @@ antrianRouter.post('/:id/panggil', async (req, res) => {
   res.json(target)
 })
 
-antrianRouter.post('/panggil-berikutnya', async (req, res) => {
+antrianRouter.post('/panggil-berikutnya', wajibIzin('panggil_antrian'), async (req, res) => {
   const { poliId, cabangId } = req.body as { poliId: string; cabangId: string }
   const berikut = await prisma.antrian.findFirst({
     where: { poliId, cabangId, status: 'menunggu' },
@@ -120,10 +122,23 @@ antrianRouter.post('/panggil-berikutnya', async (req, res) => {
   res.json(target)
 })
 
+/**
+ * Petugas/dokter/admin (`kelola_antrian`) boleh ubah ke status apa pun.
+ * Selain itu, hanya pembatalan diri sendiri yang diizinkan — pemilik tiket
+ * (atau tiket walk-in tanpa akun, pasienId kosong) membatalkan nomornya
+ * sendiri lewat halaman /status publik. Tidak ada jalur lain untuk maju
+ * status tanpa izin staf.
+ */
 antrianRouter.patch('/:id/status', async (req, res) => {
   const { status, catatan } = req.body as { status: StatusAntrian; catatan?: string }
   const target = await prisma.antrian.findUnique({ where: { id: req.params.id } })
   if (!target) return res.status(404).json({ pesan: 'Antrian tidak ditemukan.' })
+
+  const stafBolehSemua = boleh(req.aktor, 'kelola_antrian')
+  const pemilikMembatalkan = status === 'batal' && (target.pasienId === '' || target.pasienId === req.aktor?.id)
+  if (!stafBolehSemua && !pemilikMembatalkan) {
+    return res.status(403).json({ ok: false, pesan: 'Anda tidak dapat mengubah antrian ini.' })
+  }
 
   const data: Prisma.AntrianUpdateInput = { status }
   const waktu = new Date()
@@ -140,7 +155,7 @@ antrianRouter.patch('/:id/status', async (req, res) => {
   res.json(hasil)
 })
 
-antrianRouter.patch('/:id/prioritas', async (req, res) => {
+antrianRouter.patch('/:id/prioritas', wajibIzin('kelola_antrian'), async (req, res) => {
   const { prioritas } = req.body as { prioritas: Prioritas }
   const hasil = await prisma.antrian.update({ where: { id: req.params.id }, data: { prioritas } })
   await catat(req.aktor, 'UBAH_PRIORITAS', 'Antrian', `${hasil.kode} diubah ke prioritas ${prioritas}`, req.ip)
@@ -150,7 +165,7 @@ antrianRouter.patch('/:id/prioritas', async (req, res) => {
   res.json(hasil)
 })
 
-antrianRouter.patch('/:id/cabang', async (req, res) => {
+antrianRouter.patch('/:id/cabang', wajibIzin('kelola_antrian'), async (req, res) => {
   const { cabangId } = req.body as { cabangId: string }
   const target = await prisma.antrian.findUniqueOrThrow({ where: { id: req.params.id } })
   const poli = await prisma.poli.findUnique({ where: { id: target.poliId } })
@@ -165,7 +180,7 @@ antrianRouter.patch('/:id/cabang', async (req, res) => {
   res.json(hasil)
 })
 
-antrianRouter.post('/reset-harian', async (req, res) => {
+antrianRouter.post('/reset-harian', wajibIzin('kelola_antrian'), async (req, res) => {
   const { cabangId } = req.body as { cabangId: string }
   const hari = hariIniISO()
   await prisma.antrian.deleteMany({

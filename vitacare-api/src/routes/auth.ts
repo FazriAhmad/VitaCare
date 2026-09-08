@@ -1,16 +1,27 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
+import rateLimit from 'express-rate-limit'
 import { prisma } from '../lib/prisma.js'
 import { catat } from '../lib/audit.js'
+import { terbitkanToken } from '../lib/jwt.js'
+import { wajibMasuk } from '../middleware/otorisasi.js'
 
 export const authRouter = Router()
+
+const batasMasuk = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, pesan: 'Terlalu banyak percobaan masuk. Coba lagi dalam beberapa menit.' },
+})
 
 function sanitasi<T extends { passwordHash: string }>(u: T) {
   const { passwordHash, ...aman } = u
   return aman
 }
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', batasMasuk, async (req, res) => {
   const { email, sandi } = req.body as { email?: string; sandi?: string }
   if (!email || !sandi) return res.status(400).json({ ok: false, pesan: 'Email dan kata sandi wajib diisi.' })
 
@@ -22,12 +33,12 @@ authRouter.post('/login', async (req, res) => {
   if (!u.aktif) return res.status(403).json({ ok: false, pesan: 'Akun Anda dinonaktifkan. Hubungi admin.' })
 
   const diperbarui = await prisma.pengguna.update({ where: { id: u.id }, data: { terakhirLogin: new Date() } })
-  await catat({ id: u.id, nama: u.nama, peran: u.peran }, 'MASUK', 'Sesi', `${u.nama} masuk sebagai ${u.peran}`, req.ip)
+  await catat({ id: u.id, nama: u.nama, peran: u.peran, izinTambahan: u.izinTambahan, izinDicabut: u.izinDicabut }, 'MASUK', 'Sesi', `${u.nama} masuk sebagai ${u.peran}`, req.ip)
 
-  res.json({ ok: true, pesan: `Selamat datang, ${u.nama.split(',')[0]}!`, pengguna: sanitasi(diperbarui) })
+  res.json({ ok: true, pesan: `Selamat datang, ${u.nama.split(',')[0]}!`, token: terbitkanToken(u.id), pengguna: sanitasi(diperbarui) })
 })
 
-authRouter.post('/register', async (req, res) => {
+authRouter.post('/register', batasMasuk, async (req, res) => {
   const { nama, email, sandi, telepon, nik, cabangId } = req.body as {
     nama?: string; email?: string; sandi?: string; telepon?: string; nik?: string; cabangId?: string
   }
@@ -44,7 +55,7 @@ authRouter.post('/register', async (req, res) => {
     data: { nama: nama.trim(), email: emailBersih, passwordHash, peran: 'pasien', telepon, nik, cabangId, izinTambahan: [], izinDicabut: [] },
   })
 
-  await catat({ id: baru.id, nama: baru.nama, peran: baru.peran }, 'DAFTAR', 'Pengguna', `Pendaftaran akun pasien ${baru.nama}`, req.ip)
+  await catat({ id: baru.id, nama: baru.nama, peran: baru.peran, izinTambahan: [], izinDicabut: [] }, 'DAFTAR', 'Pengguna', `Pendaftaran akun pasien ${baru.nama}`, req.ip)
   await prisma.notifikasi.create({
     data: {
       judul: 'Akun berhasil dibuat',
@@ -54,5 +65,11 @@ authRouter.post('/register', async (req, res) => {
     },
   })
 
-  res.status(201).json({ ok: true, pesan: 'Pendaftaran berhasil!', pengguna: sanitasi(baru) })
+  res.status(201).json({ ok: true, pesan: 'Pendaftaran berhasil!', token: terbitkanToken(baru.id), pengguna: sanitasi(baru) })
+})
+
+/** Profil pengguna yang sedang masuk, ditentukan dari token — bukan dari input klien. */
+authRouter.get('/me', wajibMasuk, async (req, res) => {
+  const u = await prisma.pengguna.findUniqueOrThrow({ where: { id: req.aktor!.id } })
+  res.json(sanitasi(u))
 })

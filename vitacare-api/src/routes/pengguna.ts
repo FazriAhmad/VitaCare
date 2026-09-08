@@ -3,8 +3,10 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '../lib/prisma.js'
 import { catat } from '../lib/audit.js'
 import { IZIN_BAWAAN } from '../lib/permissions.js'
+import { wajibIzin } from '../middleware/otorisasi.js'
 
 export const penggunaRouter = Router()
+penggunaRouter.use(wajibIzin('kelola_pengguna'))
 
 function sanitasi<T extends { passwordHash: string }>(u: T) {
   const { passwordHash, ...aman } = u

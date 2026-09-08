@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../lib/prisma.js'
 import { catat } from '../lib/audit.js'
 import { jalankanSeed } from '../lib/seedData.js'
+import { wajibIzin } from '../middleware/otorisasi.js'
 
 export const pengaturanRouter = Router()
 
@@ -13,7 +14,7 @@ pengaturanRouter.get('/', async (_req, res) => {
   res.json(await ambilAtauBuat())
 })
 
-pengaturanRouter.patch('/', async (req, res) => {
+pengaturanRouter.patch('/', wajibIzin('ubah_pengaturan'), async (req, res) => {
   await ambilAtauBuat()
   const hasil = await prisma.pengaturan.update({ where: { id: 1 }, data: req.body })
   await catat(req.aktor, 'UBAH_PENGATURAN', 'Sistem', `Memperbarui pengaturan: ${Object.keys(req.body).join(', ')}`, req.ip)
@@ -21,7 +22,7 @@ pengaturanRouter.patch('/', async (req, res) => {
 })
 
 /** Zona berbahaya: hapus data transaksional & kembalikan master data ke set seed awal. */
-pengaturanRouter.post('/reset-sistem', async (req, res) => {
+pengaturanRouter.post('/reset-sistem', wajibIzin('ubah_pengaturan'), async (req, res) => {
   await prisma.$transaction([
     prisma.antrian.deleteMany({}),
     prisma.janjiTemu.deleteMany({}),
