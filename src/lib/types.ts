@@ -110,6 +110,8 @@ export interface Pengguna {
   izinDicabut: string[]
   dibuatPada: string
   terakhirLogin?: string
+  /** Kapan pasien menyetujui Kebijakan Privasi saat mendaftar (PRD Fase 6). */
+  persetujuanPada?: string
 }
 
 export interface Notifikasi {

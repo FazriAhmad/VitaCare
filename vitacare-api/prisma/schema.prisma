@@ -169,6 +169,8 @@ model Pengguna {
   izinDicabut   String[]
   dibuatPada    DateTime  @default(now())
   terakhirLogin DateTime?
+  /** Kapan pasien menyetujui Kebijakan Privasi saat mendaftar. Wajib diisi untuk peran pasien (PRD Fase 6). */
+  persetujuanPada DateTime?
 }
 
 model Notifikasi {

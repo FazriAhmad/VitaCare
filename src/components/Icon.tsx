@@ -44,7 +44,7 @@ const CADANGAN: Record<string, React.ComponentType<{ size?: number | string; str
   stetoskop: Stethoscope, keluarga: Baby, gigi: Droplets, hamil: Heart, jantung: Activity, mata: Eye,
   tht: Ear, kulit: Droplets, saraf: Zap, ambulans: Truck, dashboard: LayoutDashboard, daftar: ClipboardList,
   pengguna: Users, dokter: Stethoscope, poli: Layers, jadwal: Calendar, cabang: Building2, laporan: FileText,
-  audit: Shield, analitik: TrendingUp, tv: Tv, qr: QrCode, notifikasi: Bell, keluar: LogOut, masuk: LogIn,
+  audit: Shield, privasi: Shield, analitik: TrendingUp, tv: Tv, qr: QrCode, notifikasi: Bell, keluar: LogOut, masuk: LogIn,
   tambah: Plus, edit: Pencil, hapus: Trash2, cari: Search, filter: Filter, unduh: Download, cetak: Printer,
   centang: Check, tutup: X, panah: ArrowRight, bawah: ChevronDown, kiri: ChevronLeft, kanan: ChevronRight,
   suara: Volume2, bisu: VolumeX, setelan: Settings, segarkan: RefreshCw, jam: Clock, lokasi: MapPin,

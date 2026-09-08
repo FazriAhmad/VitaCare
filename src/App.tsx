@@ -10,13 +10,14 @@ import { Landing } from './pages/Landing'
 import { Login, Register } from './pages/Auth'
 import { StatusAntrian } from './pages/StatusAntrian'
 import { AmbilNomor } from './pages/AmbilNomor'
-import { PasienBeranda, PasienJanjiTemu, PasienRiwayat } from './pages/Pasien'
+import { PasienBeranda, PasienJanjiTemu, PasienPrivasi, PasienRiwayat } from './pages/Pasien'
 import { DokterBeranda, DokterJadwal, DokterRiwayat } from './pages/Dokter'
 import { PetugasAntrian, PetugasBeranda, PetugasJanjiTemu, PetugasQR } from './pages/Petugas'
 import { AdminBeranda } from './pages/Admin'
 import { AdminCabang, AdminDokter, AdminJadwal, AdminPoli } from './pages/AdminMaster'
 import { AdminAudit, AdminLaporan, AdminPengaturan, AdminPengguna } from './pages/AdminSistem'
 import { DisplayTV } from './pages/DisplayTV'
+import { KebijakanPrivasi } from './pages/KebijakanPrivasi'
 import { TidakDitemukan } from './pages/TidakDitemukan'
 
 function Tolak({ peran, izin }: { peran?: Peran[]; izin?: Izin }) {
@@ -70,11 +71,13 @@ function Rute() {
       <Route path="/status" element={<StatusAntrian />} />
       <Route path="/ambil" element={<AmbilNomor />} />
       <Route path="/tv" element={<DisplayTV />} />
+      <Route path="/kebijakan-privasi" element={<KebijakanPrivasi />} />
 
       {/* pasien */}
       <Route path="/app" element={<Lindungi anak={<PasienBeranda />} />} />
       <Route path="/app/janji-temu" element={<Lindungi anak={<PasienJanjiTemu />} />} />
       <Route path="/app/riwayat" element={<Lindungi anak={<PasienRiwayat />} izin="lihat_riwayat" />} />
+      <Route path="/app/privasi" element={<Lindungi anak={<PasienPrivasi />} />} />
 
       {/* dokter */}
       <Route path="/dokter" element={<Lindungi anak={<DokterBeranda />} peran={['dokter', 'admin']} />} />

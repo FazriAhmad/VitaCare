@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { ArrowRight, Calendar, Check, Clock, Plus, X } from 'lucide-react'
+import { ArrowRight, Calendar, Check, Clock, Plus, ShieldCheck, X } from 'lucide-react'
 import { Ikon } from '../components/Icon'
 import { KartuTiket } from '../components/KartuTiket'
 import { AppShell, KartuSorotan } from '../components/AppShell'
 import { AngkaAnimasi, Progres, useTick } from '../components/charts'
 import { AreaTeks, Kartu, Kosong, Lencana, Masukan, Modal, Pilih, Tab, Tombol, gunakanToast } from '../components/ui'
-import { LABEL_PRIORITAS, buatJanjiTemu, cariDokter, pakaiDB, pakaiPenggunaSesi, statusJanjiTemu, ubahStatusAntrian } from '../lib/db'
+import { ModalKonfirmasi } from './AdminMaster'
+import { LABEL_PRIORITAS, buatJanjiTemu, cariDokter, eksporDataSaya, hapusAkunSaya, pakaiDB, pakaiPenggunaSesi, statusJanjiTemu, ubahStatusAntrian } from '../lib/db'
 import { kpi, prediksiTunggu, trenTunggu } from '../lib/analytics'
 import { cn, hariIniISO, jam, namaHari, relatifWaktu, selisihMenit, tanggalPanjang } from '../lib/utils'
 import type { Antrian } from '../lib/types'
@@ -400,6 +401,86 @@ export function PasienRiwayat() {
           </div>
         )}
       </Modal>
+    </AppShell>
+  )
+}
+
+/* -------------------------------------------------------------- privasi */
+
+export function PasienPrivasi() {
+  const sesi = pakaiPenggunaSesi()!
+  const navigate = useNavigate()
+  const { tampilkan } = gunakanToast()
+  const [memuatEkspor, setMemuatEkspor] = useState(false)
+  const [konfirmasiHapus, setKonfirmasiHapus] = useState(false)
+  const [memuatHapus, setMemuatHapus] = useState(false)
+
+  const unduh = async () => {
+    setMemuatEkspor(true)
+    try {
+      await eksporDataSaya()
+      tampilkan('Data diunduh', 'Berkas JSON berisi seluruh data Anda telah disimpan.')
+    } catch (err) {
+      tampilkan('Gagal mengunduh', err instanceof Error ? err.message : 'Coba lagi.', 'galat')
+    } finally {
+      setMemuatEkspor(false)
+    }
+  }
+
+  const hapus = async () => {
+    setMemuatHapus(true)
+    try {
+      await hapusAkunSaya()
+      navigate('/')
+    } catch (err) {
+      tampilkan('Gagal menghapus akun', err instanceof Error ? err.message : 'Coba lagi.', 'galat')
+      setMemuatHapus(false)
+    }
+  }
+
+  return (
+    <AppShell judul="Privasi & Data Saya" sub="Kelola data pribadi yang tersimpan di akun Anda">
+      <div className="mx-auto max-w-xl space-y-5">
+        <Kartu className="p-6">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-700"><ShieldCheck size={19} /></span>
+            <div>
+              <h2 className="text-[14.5px] font-semibold text-ink-900">Persetujuan Anda</h2>
+              <p className="mt-1 text-[13px] leading-relaxed text-ink-500">
+                {sesi.persetujuanPada
+                  ? `Anda menyetujui Kebijakan Privasi VitaCare pada ${tanggalPanjang(sesi.persetujuanPada)}.`
+                  : 'Belum ada catatan persetujuan untuk akun ini.'}{' '}
+                <Link to="/kebijakan-privasi" target="_blank" className="font-semibold text-brand-700 hover:text-brand-800">Baca kebijakan lengkap</Link>
+              </p>
+            </div>
+          </div>
+        </Kartu>
+
+        <Kartu className="p-6">
+          <h2 className="text-[14.5px] font-semibold text-ink-900">Unduh data saya</h2>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-500">
+            Dapatkan salinan seluruh data pribadi, riwayat antrian, dan janji temu yang tersimpan tentang Anda, dalam format JSON.
+          </p>
+          <Tombol className="mt-4" varian="tepi" onClick={unduh} memuat={memuatEkspor} ikon="unduh">Unduh Data Saya</Tombol>
+        </Kartu>
+
+        <Kartu className="border-rose-200 p-6">
+          <h2 className="text-[14.5px] font-semibold text-rose-700">Hapus akun & data pribadi</h2>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-ink-500">
+            Nama, email, NIK, dan nomor telepon Anda akan dihapus permanen dan akun dinonaktifkan. Riwayat antrian tetap
+            tersimpan tanpa identitas Anda untuk keperluan audit operasional. Tindakan ini tidak dapat dibatalkan.
+          </p>
+          <Tombol className="mt-4" varian="bahaya" onClick={() => setKonfirmasiHapus(true)} ikon="hapus">Hapus Akun Saya</Tombol>
+        </Kartu>
+      </div>
+
+      <ModalKonfirmasi
+        buka={konfirmasiHapus}
+        onTutup={() => setKonfirmasiHapus(false)}
+        judul="Hapus akun & data pribadi?"
+        pesan="Nama, email, NIK, dan telepon Anda akan dihapus permanen. Anda akan langsung keluar dan tidak bisa masuk lagi dengan akun ini. Lanjutkan?"
+        onKonfirmasi={() => { if (!memuatHapus) void hapus() }}
+      />
     </AppShell>
   )
 }

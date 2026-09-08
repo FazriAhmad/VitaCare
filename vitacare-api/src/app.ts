@@ -10,6 +10,7 @@ import { janjiTemuRouter } from './routes/janjiTemu.js'
 import { notifikasiRouter } from './routes/notifikasi.js'
 import { pengaturanRouter } from './routes/pengaturan.js'
 import { auditRouter } from './routes/audit.js'
+import { privasiRouter } from './routes/privasi.js'
 
 export const app = express()
 app.use(cors())
@@ -26,6 +27,7 @@ app.use('/api/janji-temu', janjiTemuRouter)
 app.use('/api/notifikasi', notifikasiRouter)
 app.use('/api/pengaturan', pengaturanRouter)
 app.use('/api/audit', auditRouter)
+app.use('/api/privasi', privasiRouter)
 
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err)

@@ -164,6 +164,7 @@ export function Login() {
 
 export function Register() {
   const [form, setForm] = useState({ nama: '', email: '', sandi: '', ulangi: '', telepon: '', nik: '', cabangId: '' })
+  const [setuju, setSetuju] = useState(false)
   const [galat, setGalat] = useState<Record<string, string>>({})
   const [memuat, setMemuat] = useState(false)
   const navigate = useNavigate()
@@ -184,6 +185,7 @@ export function Register() {
     if (form.sandi.length < 6) g.sandi = 'Kata sandi minimal 6 karakter.'
     if (form.sandi !== form.ulangi) g.ulangi = 'Konfirmasi sandi tidak sama.'
     if (form.telepon.replace(/\D/g, '').length < 9) g.telepon = 'Nomor telepon tidak valid.'
+    if (!setuju) g.setuju = 'Anda harus menyetujui Kebijakan Privasi untuk mendaftar.'
     setGalat(g)
     if (Object.keys(g).length) return
 
@@ -195,6 +197,7 @@ export function Register() {
       telepon: form.telepon,
       nik: form.nik,
       cabangId: form.cabangId || 'cbg_jkt',
+      setuju,
     })
     setMemuat(false)
     if (!hasil.ok) setGalat({ email: hasil.pesan })
@@ -236,6 +239,22 @@ export function Register() {
               <p className="text-[12px] font-medium text-brand-800">
                 Setelah mendaftar, Anda langsung masuk dan dapat mengambil nomor antrian tanpa antre di loket.
               </p>
+            </div>
+            <div>
+              <label className="flex items-start gap-2.5 text-[12.5px] leading-relaxed text-ink-600">
+                <input
+                  type="checkbox"
+                  checked={setuju}
+                  onChange={(e) => setSetuju(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+                />
+                <span>
+                  Saya telah membaca dan menyetujui{' '}
+                  <Link to="/kebijakan-privasi" target="_blank" className="font-semibold text-brand-700 hover:text-brand-800">Kebijakan Privasi</Link>{' '}
+                  VitaCare, termasuk penyimpanan NIK &amp; nomor telepon secara terenkripsi.
+                </span>
+              </label>
+              {galat.setuju && <p className="mt-1.5 text-[12px] font-medium text-rose-600">{galat.setuju}</p>}
             </div>
             <Tombol type="submit" lebar ukuran="besar" memuat={memuat}>Buat Akun Pasien</Tombol>
             <p className="text-center text-[13px] text-ink-500">

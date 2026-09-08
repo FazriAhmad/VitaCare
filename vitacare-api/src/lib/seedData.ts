@@ -5,8 +5,10 @@
  * ramai di localStorage. Database produksi mulai kosong dan terisi dari
  * pemakaian nyata.
  */
-import type { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import type { prisma as PrismaExtended } from './prisma.js'
+
+type PrismaClient = typeof PrismaExtended
 
 const FOTO = ['/img/dokter1.jpg', '/img/dokter2.jpg', '/img/dokter3.jpg', '/img/dokter4.jpg']
 
@@ -102,7 +104,10 @@ export async function jalankanSeed(prisma: PrismaClient) {
   for (const [nama, email, sandi, peran, telepon, cabangId, poliId] of akunDemo) {
     await prisma.pengguna.upsert({
       where: { email },
-      create: { nama, email, passwordHash: await bcrypt.hash(sandi, 12), peran, telepon, cabangId, poliId, izinTambahan: [], izinDicabut: [] },
+      create: {
+        nama, email, passwordHash: await bcrypt.hash(sandi, 12), peran, telepon, cabangId, poliId,
+        izinTambahan: [], izinDicabut: [], persetujuanPada: peran === 'pasien' ? new Date() : undefined,
+      },
       update: {},
     })
   }

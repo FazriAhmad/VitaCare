@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { Antrian, AuditLog, Cabang, DB, Dokter, JanjiTemu, Jadwal, Notifikasi, Pengaturan, Pengguna, Peran, Poli, Prioritas, StatusAntrian } from './types'
 import { boleh } from './permissions'
 import { realtime } from './realtime'
+import { hariIniISO, unduhBerkas } from './utils'
 
 const API = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:4010/api'
 const KUNCI_TOKEN = 'vitacare.token.v1'
@@ -150,7 +151,7 @@ export async function masuk(email: string, sandi: string): Promise<{ ok: boolean
   }
 }
 
-export async function daftar(input: { nama: string; email: string; sandi: string; telepon: string; nik?: string; cabangId: string }): Promise<{ ok: boolean; pesan: string }> {
+export async function daftar(input: { nama: string; email: string; sandi: string; telepon: string; nik?: string; cabangId: string; setuju: boolean }): Promise<{ ok: boolean; pesan: string }> {
   try {
     const hasil = await post<{ ok: boolean; pesan: string; token: string; pengguna: Pengguna }>('/auth/register', input, true)
     aturSesi(hasil.pengguna, hasil.token)
@@ -266,3 +267,17 @@ export async function kirimPengumuman(judul: string, pesan: string, untukPenggun
 
 export async function simpanPengaturan(p: Partial<Pengaturan>) { await patch('/pengaturan', p); await muatSemua() }
 export async function resetSistem() { await post('/pengaturan/reset-sistem'); await muatSemua() }
+
+/* ---------------------------------------------------------------- privasi */
+
+/** Unduh seluruh data pribadi milik akun yang sedang masuk sebagai berkas JSON (hak portabilitas data). */
+export async function eksporDataSaya(): Promise<void> {
+  const data = await get<unknown>('/privasi/ekspor')
+  unduhBerkas(`vitacare-data-saya-${hariIniISO()}.json`, JSON.stringify(data, null, 2), 'application/json')
+}
+
+/** Anonimkan & nonaktifkan akun sendiri (hak hapus). Sesi lokal ikut dihapus. */
+export async function hapusAkunSaya(): Promise<void> {
+  await post('/privasi/hapus')
+  keluar()
+}

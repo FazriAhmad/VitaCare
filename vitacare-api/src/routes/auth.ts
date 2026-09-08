@@ -43,11 +43,14 @@ authRouter.post('/login', batasMasuk, async (req, res) => {
 })
 
 authRouter.post('/register', batasMasuk, async (req, res) => {
-  const { nama, email, sandi, telepon, nik, cabangId } = req.body as {
-    nama?: string; email?: string; sandi?: string; telepon?: string; nik?: string; cabangId?: string
+  const { nama, email, sandi, telepon, nik, cabangId, setuju } = req.body as {
+    nama?: string; email?: string; sandi?: string; telepon?: string; nik?: string; cabangId?: string; setuju?: boolean
   }
   if (!nama || !email || !sandi || !telepon || !cabangId) {
     return res.status(400).json({ ok: false, pesan: 'Semua kolom wajib diisi.' })
+  }
+  if (!setuju) {
+    return res.status(400).json({ ok: false, pesan: 'Anda harus menyetujui Kebijakan Privasi untuk mendaftar.' })
   }
 
   const emailBersih = email.trim().toLowerCase()
@@ -56,7 +59,7 @@ authRouter.post('/register', batasMasuk, async (req, res) => {
 
   const passwordHash = await bcrypt.hash(sandi, 12)
   const baru = await prisma.pengguna.create({
-    data: { nama: nama.trim(), email: emailBersih, passwordHash, peran: 'pasien', telepon, nik, cabangId, izinTambahan: [], izinDicabut: [] },
+    data: { nama: nama.trim(), email: emailBersih, passwordHash, peran: 'pasien', telepon, nik, cabangId, izinTambahan: [], izinDicabut: [], persetujuanPada: new Date() },
   })
 
   await catat({ id: baru.id, nama: baru.nama, peran: baru.peran, izinTambahan: [], izinDicabut: [] }, 'DAFTAR', 'Pengguna', `Pendaftaran akun pasien ${baru.nama}`, req.ip)

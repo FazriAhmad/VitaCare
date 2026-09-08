@@ -43,7 +43,8 @@ const NAV: Record<Peran, ItemNav[]> = {
     { tautan: '/app', label: 'Antrian Saya', ikon: 'tiket' },
     { tautan: '/ambil', label: 'Ambil Nomor', ikon: 'tambah' },
     { tautan: '/app/janji-temu', label: 'Janji Temu', ikon: 'kalender' },
-    { tautan: '/app/riwayat', label: 'Riwayat', ikon: 'riwayat', akhir: true },
+    { tautan: '/app/riwayat', label: 'Riwayat', ikon: 'riwayat' },
+    { tautan: '/app/privasi', label: 'Privasi & Data Saya', ikon: 'privasi', akhir: true },
   ],
 }
 
