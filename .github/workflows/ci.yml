@@ -28,6 +28,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vitecare
       JWT_SECRET: ci-test-secret-not-for-production
+      ENCRYPTION_KEY: b6TTDypk7fA4s29cP25n1Gtu3qUJzatU3xvW75c7c3I=
       PORT: 4010
       NODE_ENV: test
     steps:
