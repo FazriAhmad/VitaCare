@@ -5,6 +5,14 @@ import { catat } from '../lib/audit.js'
 import { hariIniISO, pad2 } from '../lib/util.js'
 import { wajibIzin } from '../middleware/otorisasi.js'
 import { boleh } from '../lib/permissions.js'
+import { kirimEmail } from '../lib/email.js'
+
+/** Email cuma bisa dikirim ke pasien yang punya akun (pasienId terisi) — walk-in tanpa login tidak punya alamat email. */
+async function emailPasien(pasienId: string): Promise<string | null> {
+  if (!pasienId) return null
+  const p = await prisma.pengguna.findUnique({ where: { id: pasienId }, select: { email: true } })
+  return p?.email ?? null
+}
 
 export const antrianRouter = Router()
 
@@ -89,6 +97,12 @@ antrianRouter.post('/', async (req, res) => {
       tautan: `/status?kode=${antrian.kode}`,
     },
   })
+  await kirimEmail(
+    await emailPasien(antrian.pasienId),
+    `Nomor antrian ${antrian.kode} — VitaCare`,
+    'Nomor antrian Anda terdaftar',
+    `Nomor <strong>${antrian.kode}</strong> untuk ${antrian.pasienNama} di <strong>${poli?.nama}</strong> berhasil didaftarkan.<br>Estimasi tunggu ±${antrian.estimasiAwal} menit. Tunjukkan QR tiket saat dipanggil.`,
+  )
   res.status(201).json(antrian)
 })
 
@@ -105,6 +119,12 @@ antrianRouter.post('/:id/panggil', wajibIzin('panggil_antrian'), async (req, res
       tautan: `/status?kode=${target.kode}`,
     },
   })
+  await kirimEmail(
+    await emailPasien(target.pasienId),
+    `Giliran Anda — ${target.kode} — VitaCare`,
+    'Nomor Anda dipanggil',
+    `Nomor <strong>${target.kode}</strong> dipanggil sekarang. Silakan menuju <strong>${poli?.nama ?? 'poli'}</strong> — ${poli?.ruang ?? ''}.`,
+  )
   res.json(target)
 })
 
@@ -119,6 +139,12 @@ antrianRouter.post('/panggil-berikutnya', wajibIzin('panggil_antrian'), async (r
   const target = await prisma.antrian.update({ where: { id: berikut.id }, data: { status: 'dipanggil', dipanggilPada: new Date() } })
   const poli = await prisma.poli.findUnique({ where: { id: target.poliId } })
   await catat(req.aktor, 'PANGGIL_ANTRIAN', 'Antrian', `Memanggil ${target.kode} ke ${poli?.ruang ?? '-'}`, req.ip)
+  await kirimEmail(
+    await emailPasien(target.pasienId),
+    `Giliran Anda — ${target.kode} — VitaCare`,
+    'Nomor Anda dipanggil',
+    `Nomor <strong>${target.kode}</strong> dipanggil sekarang. Silakan menuju <strong>${poli?.nama ?? 'poli'}</strong> — ${poli?.ruang ?? ''}.`,
+  )
   res.json(target)
 })
 
