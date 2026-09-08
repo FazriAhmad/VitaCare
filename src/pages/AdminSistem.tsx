@@ -476,8 +476,8 @@ export function AdminPengaturan() {
             ))}
           </div>
           <p className="mt-4 text-[12px] leading-relaxed text-ink-500">
-            Seluruh data tersimpan di localStorage peramban (<span className="font-mono text-[11px]">vitacare.db.v3</span>) dan
-            disinkronkan realtime antar tab melalui kanal BroadcastChannel.
+            Seluruh data tersimpan di PostgreSQL (<span className="font-mono text-[11px]">vitacare-api</span>) dan
+            disinkronkan ke seluruh perangkat setiap beberapa detik. Realtime instan (WebSocket) menyusul di fase berikutnya.
           </p>
         </Kartu>
 

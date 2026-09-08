@@ -95,7 +95,8 @@ export interface Pengguna {
   id: string
   nama: string
   email: string
-  sandi: string
+  /** Hanya dikirim saat membuat/mengubah akun; respons API tidak pernah menyertakannya. */
+  sandi?: string
   peran: Peran
   telepon: string
   nik?: string

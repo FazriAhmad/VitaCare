@@ -1,8 +1,8 @@
 import { useEffect } from 'react'
 import { HashRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
-import { Pemberitahuan, Spinner, Tombol } from './components/ui'
+import { Pemberitahuan, Spinner, Tombol, gunakanToast } from './components/ui'
 import { AppShell } from './components/AppShell'
-import { mulaiSimulasi, pakaiPenggunaSesi } from './lib/db'
+import { langganGalat, mulaiSinkronisasi, pakaiPenggunaSesi, pakaiSiap } from './lib/db'
 import { boleh, labelPeran, type Izin } from './lib/permissions'
 import type { Peran } from './lib/types'
 
@@ -104,11 +104,27 @@ function Rute() {
   )
 }
 
+function GalatGlobal() {
+  const { tampilkan } = gunakanToast()
+  useEffect(() => langganGalat((pesan) => tampilkan('Gagal terhubung ke server', pesan, 'galat')), [tampilkan])
+  return null
+}
+
 export default function App() {
-  useEffect(() => mulaiSimulasi(), [])
+  const siap = pakaiSiap()
+  useEffect(() => mulaiSinkronisasi(), [])
+
+  if (!siap) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink-50">
+        <Spinner ukuran={30} />
+      </div>
+    )
+  }
 
   return (
     <Pemberitahuan>
+      <GalatGlobal />
       <HashRouter>
         <Rute />
       </HashRouter>

@@ -47,7 +47,7 @@ export function AmbilNomor() {
     return { antre, menit: Math.max(1, Math.round(dasar * faktor)) }
   }, [db.antrian, poliTerpilih, cabangId, prioritas])
 
-  const kirim = () => {
+  const kirim = async () => {
     const g: Record<string, string> = {}
     if (!poliId) g.poli = 'Pilih poli terlebih dahulu.'
     if (nama.trim().length < 3) g.nama = 'Nama lengkap minimal 3 karakter.'
@@ -56,17 +56,21 @@ export function AmbilNomor() {
     setGalat(g)
     if (Object.keys(g).length) return
 
-    const antrian = ambilNomor({
-      poliId,
-      cabangId,
-      nama,
-      telepon,
-      alasan: alasan || 'Konsultasi umum',
-      prioritas,
-      pasienId: sesi?.id,
-    })
-    setHasil(antrian)
-    tampilkan('Nomor berhasil diambil', `${antrian.kode} — estimasi tunggu ${antrian.estimasiAwal} menit.`)
+    try {
+      const antrian = await ambilNomor({
+        poliId,
+        cabangId,
+        nama,
+        telepon,
+        alasan: alasan || 'Konsultasi umum',
+        prioritas,
+        pasienId: sesi?.id,
+      })
+      setHasil(antrian)
+      tampilkan('Nomor berhasil diambil', `${antrian.kode} — estimasi tunggu ${antrian.estimasiAwal} menit.`)
+    } catch (err) {
+      tampilkan('Gagal mengambil nomor', err instanceof Error ? err.message : 'Coba lagi.', 'galat')
+    }
   }
 
   if (hasil) {

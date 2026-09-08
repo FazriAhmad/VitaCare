@@ -36,8 +36,8 @@ export function DokterBeranda() {
     ? Math.round(selesaiHari.reduce((s, a) => s + (a.dipanggilPada && a.selesaiPada ? selisihMenit(a.dipanggilPada, a.selesaiPada) : 0), 0) / selesaiHari.length)
     : 0
 
-  const panggil = () => {
-    const a = panggilBerikutnya(poli?.id ?? '', db.cabang[0].id)
+  const panggil = async () => {
+    const a = await panggilBerikutnya(poli?.id ?? '', db.cabang[0].id)
     if (!a) return tampilkan('Antrean kosong', 'Tidak ada pasien menunggu di poli ini.', 'peringatan')
     tampilkan('Memanggil ' + a.kode, `${a.pasienNama} silakan menuju ${poli?.ruang}`)
   }

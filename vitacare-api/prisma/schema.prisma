@@ -1,0 +1,208 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Peran {
+  admin
+  petugas
+  dokter
+  pasien
+}
+
+enum StatusAntrian {
+  menunggu
+  dipanggil
+  dilayani
+  selesai
+  batal
+}
+
+enum Prioritas {
+  darurat
+  hamil
+  difabel
+  lansia
+  reguler
+}
+
+enum StatusJanjiTemu {
+  menunggu
+  dikonfirmasi
+  selesai
+  batal
+}
+
+enum TipeNotifikasi {
+  info
+  sukses
+  peringatan
+  panggilan
+}
+
+model Cabang {
+  id      String  @id
+  kode    String  @unique
+  nama    String
+  kota    String
+  alamat  String
+  telepon String
+  warna   String
+  aktif   Boolean @default(true)
+
+  jadwal  Jadwal[]
+}
+
+model Poli {
+  id          String   @id
+  kode        String   @unique
+  nama        String
+  deskripsi   String
+  ruang       String
+  lantai      String
+  warna       String
+  ikon        String
+  rataLayanan Int
+  cabangIds   String[]
+  aktif       Boolean  @default(true)
+
+  dokter Dokter[]
+}
+
+model Dokter {
+  id        String  @id @default(cuid())
+  nama      String
+  spesialis String
+  sip       String
+  poliId    String
+  telepon   String
+  email     String  @unique
+  foto      String
+  rating    Float
+  aktif     Boolean @default(true)
+  bergabung String
+
+  poli   Poli     @relation(fields: [poliId], references: [id])
+  jadwal Jadwal[]
+
+  @@index([poliId])
+}
+
+model Jadwal {
+  id       String  @id @default(cuid())
+  dokterId String
+  hari     Int
+  mulai    String
+  selesai  String
+  kuota    Int
+  cabangId String
+  aktif    Boolean @default(true)
+
+  dokter Dokter @relation(fields: [dokterId], references: [id], onDelete: Cascade)
+  cabang Cabang @relation(fields: [cabangId], references: [id])
+
+  @@index([dokterId])
+  @@index([cabangId])
+}
+
+model Antrian {
+  id            String        @id @default(cuid())
+  kode          String
+  nomor         Int
+  poliId        String
+  dokterId      String
+  cabangId      String
+  pasienId      String
+  pasienNama    String
+  telepon       String
+  alasan        String
+  prioritas     Prioritas
+  status        StatusAntrian @default(menunggu)
+  ambilPada     DateTime
+  dipanggilPada DateTime?
+  dilayaniPada  DateTime?
+  selesaiPada   DateTime?
+  catatan       String?
+  estimasiAwal  Int
+
+  @@index([poliId, cabangId])
+  @@index([status])
+}
+
+model JanjiTemu {
+  id         String           @id @default(cuid())
+  kode       String
+  pasienId   String
+  pasienNama String
+  dokterId   String
+  poliId     String
+  cabangId   String
+  tanggal    String
+  jam        String
+  alasan     String
+  status     StatusJanjiTemu  @default(menunggu)
+  dibuatPada DateTime         @default(now())
+  antrianId  String?
+
+  @@index([pasienId])
+}
+
+model Pengguna {
+  id            String    @id @default(cuid())
+  nama          String
+  email         String    @unique
+  passwordHash  String
+  peran         Peran
+  telepon       String
+  nik           String?
+  tanggalLahir  String?
+  jenisKelamin  String?
+  poliId        String?
+  cabangId      String?
+  avatar        String?
+  aktif         Boolean   @default(true)
+  izinTambahan  String[]
+  izinDicabut   String[]
+  dibuatPada    DateTime  @default(now())
+  terakhirLogin DateTime?
+}
+
+model Notifikasi {
+  id              String         @id @default(cuid())
+  judul           String
+  pesan           String
+  tipe            TipeNotifikasi
+  dibaca          Boolean        @default(false)
+  dibuatPada      DateTime       @default(now())
+  untukPenggunaId String?
+  tautan          String?
+
+  @@index([untukPenggunaId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  waktu      DateTime @default(now())
+  aktorId    String
+  aktorNama  String
+  aktorPeran Peran
+  aksi       String
+  entitas    String
+  detail     String
+  ip         String
+}
+
+model Pengaturan {
+  id                Int     @id @default(1)
+  namaRs            String  @default("RS VitaCare")
+  jamBuka           String  @default("07:30")
+  jamTutup          String  @default("20:00")
+  suaraPanggilan    Boolean @default(true)
+  notifikasiBrowser Boolean @default(false)
+  modeSimulasi      Boolean @default(false)
+  selisihPanggilan  Int     @default(4)
+}

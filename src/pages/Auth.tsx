@@ -36,18 +36,16 @@ export function Login() {
     navigate(tujuan, { replace: true })
   }, [pengguna, navigate])
 
-  const kirim = (e: React.FormEvent) => {
+  const kirim = async (e: React.FormEvent) => {
     e.preventDefault()
     setGalat('')
     if (!validasiEmail(email)) return setGalat('Format email tidak valid.')
     if (sandi.length < 5) return setGalat('Kata sandi minimal 5 karakter.')
     setMemuat(true)
-    window.setTimeout(() => {
-      const hasil = masuk(email, sandi)
-      setMemuat(false)
-      if (!hasil.ok) setGalat(hasil.pesan)
-      else tampilkan('Berhasil masuk', hasil.pesan)
-    }, 520)
+    const hasil = await masuk(email, sandi)
+    setMemuat(false)
+    if (!hasil.ok) setGalat(hasil.pesan)
+    else tampilkan('Berhasil masuk', hasil.pesan)
   }
 
   const isiDemo = (d: (typeof DEMO)[number]) => {
@@ -90,7 +88,7 @@ export function Login() {
           </div>
         </div>
 
-        <p className="relative text-[12px] text-white/30">© 2026 VitaCare. Data disimpan lokal di peramban Anda.</p>
+        <p className="relative text-[12px] text-white/30">© 2026 VitaCare. Tersinkron real-time di seluruh cabang.</p>
       </div>
 
       {/* panel kanan */}
@@ -178,7 +176,7 @@ export function Register() {
 
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }))
 
-  const kirim = (e: React.FormEvent) => {
+  const kirim = async (e: React.FormEvent) => {
     e.preventDefault()
     const g: Record<string, string> = {}
     if (form.nama.trim().length < 3) g.nama = 'Nama lengkap minimal 3 karakter.'
@@ -190,22 +188,20 @@ export function Register() {
     if (Object.keys(g).length) return
 
     setMemuat(true)
-    window.setTimeout(() => {
-      const hasil = daftar({
-        nama: form.nama,
-        email: form.email,
-        sandi: form.sandi,
-        telepon: form.telepon,
-        nik: form.nik,
-        cabangId: form.cabangId || 'cbg_jkt',
-      })
-      setMemuat(false)
-      if (!hasil.ok) setGalat({ email: hasil.pesan })
-      else {
-        tampilkan('Pendaftaran berhasil', 'Anda kini dapat mengambil nomor antrian.')
-        navigate('/ambil')
-      }
-    }, 480)
+    const hasil = await daftar({
+      nama: form.nama,
+      email: form.email,
+      sandi: form.sandi,
+      telepon: form.telepon,
+      nik: form.nik,
+      cabangId: form.cabangId || 'cbg_jkt',
+    })
+    setMemuat(false)
+    if (!hasil.ok) setGalat({ email: hasil.pesan })
+    else {
+      tampilkan('Pendaftaran berhasil', 'Anda kini dapat mengambil nomor antrian.')
+      navigate('/ambil')
+    }
   }
 
   return (

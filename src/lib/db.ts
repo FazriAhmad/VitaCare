@@ -1,40 +1,18 @@
 import { useSyncExternalStore } from 'react'
 import type { Antrian, AuditLog, Cabang, DB, Dokter, JanjiTemu, Jadwal, Notifikasi, Pengaturan, Pengguna, Peran, Poli, Prioritas, StatusAntrian } from './types'
-import { seedDB } from './seed'
-import { realtime, siarkanSinkron } from './realtime'
-import { IZIN_BAWAAN } from './permissions'
-import { hariIniISO, jam, pad2, uid } from './utils'
 
-const KUNCI = 'vitacare.db.v3'
+const API = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:4010/api'
 const KUNCI_SESI = 'vitacare.sesi.v3'
-const VERSI = 3
+const JEDA_POLING = 6000
 
-/* ------------------------------------------------------------------ muat */
-
-function muat(): DB {
-  try {
-    const kasar = localStorage.getItem(KUNCI)
-    if (kasar) {
-      const t = JSON.parse(kasar) as DB
-      if (t && t.versi === VERSI && Array.isArray(t.poli)) return t
-    }
-  } catch {
-    /* rusak -> benih ulang */
-  }
-  const baru = seedDB()
-  simpan(baru)
-  return baru
+const KOSONG: DB = {
+  versi: 3, cabang: [], poli: [], dokter: [], jadwal: [], antrian: [], janjiTemu: [],
+  pengguna: [], notifikasi: [], audit: [],
+  pengaturan: { namaRs: 'RS VitaCare', jamBuka: '07:30', jamTutup: '20:00', suaraPanggilan: true, notifikasiBrowser: false, modeSimulasi: false, selisihPanggilan: 4 },
 }
 
-function simpan(db: DB) {
-  try {
-    localStorage.setItem(KUNCI, JSON.stringify(db))
-  } catch {
-    /* kuota penuh */
-  }
-}
-
-let data: DB = muat()
+let data: DB = KOSONG
+let siap = false
 let sesiId: string | null = null
 try {
   sesiId = localStorage.getItem(KUNCI_SESI)
@@ -44,166 +22,124 @@ try {
 
 const pendengar = new Set<() => void>()
 const pendengarSesi = new Set<() => void>()
+const pendengarGalat = new Set<(pesan: string) => void>()
 
-function getSnapshot(): DB {
-  return data
-}
+function sebar() { pendengar.forEach((f) => f()) }
+function sebarSesi() { pendengarSesi.forEach((f) => f()) }
+function laporGalat(pesan: string) { pendengarGalat.forEach((f) => f(pesan)) }
 
-function sebar() {
-  pendengar.forEach((f) => f())
-}
+export function langgan(f: () => void) { pendengar.add(f); return () => { pendengar.delete(f) } }
+export function langganSesi(f: () => void) { pendengarSesi.add(f); return () => { pendengarSesi.delete(f) } }
+export function langganGalat(f: (pesan: string) => void) { pendengarGalat.add(f); return () => { pendengarGalat.delete(f) } }
 
-function sebarSesi() {
-  pendengarSesi.forEach((f) => f())
-}
-
-export function langgan(f: () => void) {
-  pendengar.add(f)
-  return () => {
-    pendengar.delete(f)
-  }
-}
-
-export function langganSesi(f: () => void) {
-  pendengarSesi.add(f)
-  return () => {
-    pendengarSesi.delete(f)
-  }
-}
-
-export function getDB(): DB {
-  return data
-}
-
-export function pakaiDB(): DB {
-  return useSyncExternalStore(langgan, getSnapshot, getSnapshot)
-}
+export function getDB(): DB { return data }
+export function pakaiDB(): DB { return useSyncExternalStore(langgan, getDB, getDB) }
+export function pakaiSiap(): boolean { return useSyncExternalStore(langgan, () => siap, () => siap) }
 
 export function pakaiPenggunaSesi(): Pengguna | null {
-  useSyncExternalStore(langganSesi, getSnapshot, getSnapshot)
+  useSyncExternalStore(langganSesi, () => sesiId, () => sesiId)
+  useSyncExternalStore(langgan, getDB, getDB)
   if (!sesiId) return null
   return data.pengguna.find((p) => p.id === sesiId) ?? null
 }
 
-/** Terapkan perubahan, simpan, dan siarkan ke tab lain (realtime). */
-function ubah(mutator: (db: DB) => DB, opsi: { senyap?: boolean } = {}) {
-  data = mutator(data)
-  simpan(data)
+/* ------------------------------------------------------------------- API */
+
+async function permintaan<T>(path: string, opsi: RequestInit = {}, senyapGalat = false): Promise<T> {
+  try {
+    const res = await fetch(`${API}${path}`, {
+      ...opsi,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(sesiId ? { 'X-User-Id': sesiId } : {}),
+        ...(opsi.headers ?? {}),
+      },
+    })
+    if (res.status === 204) return undefined as T
+    const isi = await res.json().catch(() => null)
+    if (!res.ok) {
+      const pesan = isi && typeof isi === 'object' && 'pesan' in isi ? String((isi as { pesan: unknown }).pesan) : `Permintaan gagal (${res.status})`
+      throw new Error(pesan)
+    }
+    return isi as T
+  } catch (err) {
+    const pesan = err instanceof Error ? err.message : 'Tidak dapat menghubungi server VitaCare.'
+    if (!senyapGalat) laporGalat(pesan)
+    throw err instanceof Error ? err : new Error(pesan)
+  }
+}
+
+const get = <T,>(path: string, senyap = false) => permintaan<T>(path, { method: 'GET' }, senyap)
+const post = <T,>(path: string, body?: unknown, senyap = false) => permintaan<T>(path, { method: 'POST', body: body !== undefined ? JSON.stringify(body) : undefined }, senyap)
+const patch = <T,>(path: string, body?: unknown, senyap = false) => permintaan<T>(path, { method: 'PATCH', body: body !== undefined ? JSON.stringify(body) : undefined }, senyap)
+const del = <T,>(path: string, senyap = false) => permintaan<T>(path, { method: 'DELETE' }, senyap)
+
+/** Ambil ulang seluruh koleksi dari server dan sebarkan ke komponen yang berlangganan. */
+async function muatSemua() {
+  const [cabang, poli, dokter, jadwal, antrian, janjiTemu, pengguna, notifikasi, audit, pengaturan] = await Promise.all([
+    get<Cabang[]>('/cabang', true),
+    get<Poli[]>('/poli', true),
+    get<Dokter[]>('/dokter', true),
+    get<Jadwal[]>('/jadwal', true),
+    get<Antrian[]>('/antrian', true),
+    get<JanjiTemu[]>('/janji-temu', true),
+    get<Pengguna[]>('/pengguna', true),
+    get<Notifikasi[]>(`/notifikasi${sesiId ? `?penggunaId=${sesiId}` : ''}`, true),
+    get<AuditLog[]>('/audit', true),
+    get<Pengaturan>('/pengaturan', true),
+  ])
+  data = { versi: 3, cabang, poli, dokter, jadwal, antrian, janjiTemu, pengguna, notifikasi, audit, pengaturan }
+  siap = true
   sebar()
-  if (!opsi.senyap) siarkanSinkron(sesiId ?? 'tamu')
 }
 
-realtime.langgan((p) => {
-  if (p.jenis === 'sinkron') {
-    data = muat()
-    sebar()
-    sebarSesi()
-  }
-})
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === KUNCI) {
-      data = muat()
-      sebar()
-      sebarSesi()
-    }
-  })
-}
-
-/* ----------------------------------------------------------------- audit */
-
-function catat(aksi: string, entitas: string, detail: string) {
-  const aktor = data.pengguna.find((p) => p.id === sesiId)
-  const log: AuditLog = {
-    id: uid('aud'),
-    waktu: new Date().toISOString(),
-    aktorId: aktor?.id ?? 'tamu',
-    aktorNama: aktor?.nama ?? 'Tamu / Kiosk',
-    aktorPeran: aktor?.peran ?? 'pasien',
-    aksi,
-    entitas,
-    detail,
-    ip: `10.10.${Math.floor(Math.random() * 8) + 2}.${Math.floor(Math.random() * 240) + 8}`,
-  }
-  ubah((db) => ({ ...db, audit: [log, ...db.audit].slice(0, 600) }), { senyap: true })
-}
-
-export function beriNotifikasi(n: Omit<Notifikasi, 'id' | 'dibaca' | 'dibuatPada'>) {
-  const baru: Notifikasi = { ...n, id: uid('ntf'), dibaca: false, dibuatPada: new Date().toISOString() }
-  ubah((db) => ({ ...db, notifikasi: [baru, ...db.notifikasi].slice(0, 120) }), { senyap: true })
-
-  if (data.pengaturan.notifikasiBrowser && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    try {
-      new Notification(n.judul, { body: n.pesan, icon: '/favicon.svg' })
-    } catch {
-      /* ditolak peramban */
-    }
-  }
-  return baru
+/**
+ * Muat data awal & mulai polling berkala. Ini pengganti sementara realtime
+ * sungguhan (WebSocket) — cukup untuk lintas perangkat, belum instan.
+ * Lihat PRD VitaCare Fase 3.
+ */
+export function mulaiSinkronisasi(): () => void {
+  void muatSemua()
+  const t = window.setInterval(() => void muatSemua(), JEDA_POLING)
+  return () => window.clearInterval(t)
 }
 
 /* --------------------------------------------------------------- autentik */
 
-export function masuk(email: string, sandi: string): { ok: boolean; pesan: string } {
-  const u = data.pengguna.find((p) => p.email.toLowerCase() === email.trim().toLowerCase())
-  if (!u) return { ok: false, pesan: 'Email tidak terdaftar.' }
-  if (u.sandi !== sandi) return { ok: false, pesan: 'Kata sandi salah. Coba lagi.' }
-  if (!u.aktif) return { ok: false, pesan: 'Akun Anda dinonaktifkan. Hubungi admin.' }
-  sesiId = u.id
+export async function masuk(email: string, sandi: string): Promise<{ ok: boolean; pesan: string }> {
   try {
-    localStorage.setItem(KUNCI_SESI, u.id)
-  } catch { /* abaikan */ }
-  ubah((db) => ({
-    ...db,
-    pengguna: db.pengguna.map((p) => (p.id === u.id ? { ...p, terakhirLogin: new Date().toISOString() } : p)),
-  }), { senyap: true })
-  catat('MASUK', 'Sesi', `${u.nama} masuk sebagai ${u.peran}`)
-  sebarSesi()
-  return { ok: true, pesan: `Selamat datang, ${u.nama.split(',')[0]}!` }
+    const hasil = await post<{ ok: boolean; pesan: string; pengguna: Pengguna }>('/auth/login', { email, sandi }, true)
+    sesiId = hasil.pengguna.id
+    try { localStorage.setItem(KUNCI_SESI, sesiId) } catch { /* abaikan */ }
+    await muatSemua()
+    sebarSesi()
+    return { ok: true, pesan: hasil.pesan }
+  } catch (err) {
+    return { ok: false, pesan: err instanceof Error ? err.message : 'Gagal masuk.' }
+  }
 }
 
-export function daftar(dataBaru: { nama: string; email: string; sandi: string; telepon: string; nik?: string; cabangId: string }): { ok: boolean; pesan: string } {
-  const email = dataBaru.email.trim().toLowerCase()
-  if (data.pengguna.some((p) => p.email.toLowerCase() === email)) {
-    return { ok: false, pesan: 'Email sudah terdaftar. Gunakan email lain.' }
-  }
-  const baru: Pengguna = {
-    id: uid('pgu'),
-    nama: dataBaru.nama.trim(),
-    email,
-    sandi: dataBaru.sandi,
-    peran: 'pasien',
-    telepon: dataBaru.telepon,
-    nik: dataBaru.nik,
-    cabangId: dataBaru.cabangId,
-    aktif: true,
-    izinTambahan: [],
-    izinDicabut: [],
-    dibuatPada: new Date().toISOString(),
-  }
-  ubah((db) => ({ ...db, pengguna: [...db.pengguna, baru] }), { senyap: true })
-  sesiId = baru.id
+export async function daftar(input: { nama: string; email: string; sandi: string; telepon: string; nik?: string; cabangId: string }): Promise<{ ok: boolean; pesan: string }> {
   try {
-    localStorage.setItem(KUNCI_SESI, baru.id)
-  } catch { /* abaikan */ }
-  catat('DAFTAR', 'Pengguna', `Pendaftaran akun pasien ${baru.nama}`)
-  beriNotifikasi({ judul: 'Akun berhasil dibuat', pesan: `Selamat datang di VitaCare, ${baru.nama}. Anda dapat langsung mengambil nomor antrian.`, tipe: 'sukses' })
-  sebarSesi()
-  return { ok: true, pesan: 'Pendaftaran berhasil!' }
+    const hasil = await post<{ ok: boolean; pesan: string; pengguna: Pengguna }>('/auth/register', input, true)
+    sesiId = hasil.pengguna.id
+    try { localStorage.setItem(KUNCI_SESI, sesiId) } catch { /* abaikan */ }
+    await muatSemua()
+    sebarSesi()
+    return { ok: true, pesan: hasil.pesan }
+  } catch (err) {
+    return { ok: false, pesan: err instanceof Error ? err.message : 'Gagal mendaftar.' }
+  }
 }
 
 export function keluar() {
-  const u = data.pengguna.find((p) => p.id === sesiId)
-  if (u) catat('KELUAR', 'Sesi', `${u.nama} keluar dari sistem`)
   sesiId = null
-  try {
-    localStorage.removeItem(KUNCI_SESI)
-  } catch { /* abaikan */ }
+  try { localStorage.removeItem(KUNCI_SESI) } catch { /* abaikan */ }
   sebarSesi()
 }
 
 /* --------------------------------------------------------------- selector */
+/* Murni beroperasi pada snapshot `DB` lokal — tidak menyentuh jaringan. */
 
 export const cariPoli = (db: DB, id: string) => db.poli.find((p) => p.id === id)
 export const cariDokter = (db: DB, id: string) => db.dokter.find((d) => d.id === id)
@@ -234,15 +170,11 @@ export function urutAntrian(a: Antrian, b: Antrian): number {
 }
 
 export function antrianAktif(db: DB, cabangId?: string): Antrian[] {
-  return db.antrian
-    .filter((a) => a.status !== 'selesai' && a.status !== 'batal' && (!cabangId || a.cabangId === cabangId))
-    .sort(urutAntrian)
+  return db.antrian.filter((a) => a.status !== 'selesai' && a.status !== 'batal' && (!cabangId || a.cabangId === cabangId)).sort(urutAntrian)
 }
 
 export function antreanPoli(db: DB, poliId: string, cabangId?: string): Antrian[] {
-  return db.antrian
-    .filter((a) => a.poliId === poliId && a.status !== 'selesai' && a.status !== 'batal' && (!cabangId || a.cabangId === cabangId))
-    .sort(urutAntrian)
+  return db.antrian.filter((a) => a.poliId === poliId && a.status !== 'selesai' && a.status !== 'batal' && (!cabangId || a.cabangId === cabangId)).sort(urutAntrian)
 }
 
 export function panggilanTerakhir(db: DB, cabangId?: string): Antrian | null {
@@ -250,63 +182,6 @@ export function panggilanTerakhir(db: DB, cabangId?: string): Antrian | null {
     .filter((a) => a.dipanggilPada && (a.status === 'dipanggil' || a.status === 'dilayani') && (!cabangId || a.cabangId === cabangId))
     .sort((a, b) => new Date(b.dipanggilPada!).getTime() - new Date(a.dipanggilPada!).getTime())
   return daftar[0] ?? null
-}
-
-export function nomorBaru(db: DB, poliId: string, cabangId: string): number {
-  const hari = hariIniISO()
-  const jumlah = db.antrian.filter(
-    (a) => a.poliId === poliId && a.cabangId === cabangId && a.ambilPada.slice(0, 10) === hari,
-  ).length
-  return jumlah + 1
-}
-
-/* ---------------------------------------------------------------- antrian */
-
-export function ambilNomor(input: {
-  poliId: string
-  cabangId: string
-  dokterId?: string
-  nama: string
-  telepon: string
-  alasan: string
-  prioritas: Prioritas
-  pasienId?: string
-}): Antrian {
-  const db = data
-  const poli = cariPoli(db, input.poliId)!
-  const nomor = nomorBaru(db, input.poliId, input.cabangId)
-  const dokterAktif = input.dokterId ?? dokterPraktik(db, input.poliId, input.cabangId)?.id ?? db.dokter[0].id
-  const antrian: Antrian = {
-    id: uid('antrian'),
-    kode: `${poli.kode}-${pad2(nomor)}`,
-    nomor,
-    poliId: poli.id,
-    dokterId: dokterAktif,
-    cabangId: input.cabangId,
-    pasienId: input.pasienId ?? '',
-    pasienNama: input.nama.trim(),
-    telepon: input.telepon,
-    alasan: input.alasan,
-    prioritas: input.prioritas,
-    status: 'menunggu',
-    ambilPada: new Date().toISOString(),
-    estimasiAwal: estimasiDasar(db, poli.id, input.cabangId),
-  }
-  ubah((d) => ({ ...d, antrian: [...d.antrian, antrian] }), { senyap: true })
-  catat('AMBIL_NOMOR', 'Antrian', `Nomor ${antrian.kode} untuk ${antrian.pasienNama} di ${poli.nama}`)
-  beriNotifikasi({
-    judul: `Nomor antrian ${antrian.kode}`,
-    pesan: `Anda terdaftar di ${poli.nama}. Estimasi tunggu ±${antrian.estimasiAwal} menit. Tunjukkan QR saat dipanggil.`,
-    tipe: 'info',
-    tautan: `/status?kode=${antrian.kode}`,
-  })
-  return antrian
-}
-
-function estimasiDasar(db: DB, poliId: string, cabangId: string): number {
-  const poli = cariPoli(db, poliId)
-  const antre = antreanPoli(db, poliId, cabangId).length
-  return Math.max(2, Math.round(antre * (poli?.rataLayanan ?? 6) * 0.8))
 }
 
 export function dokterPraktik(db: DB, poliId: string, cabangId: string): Dokter | undefined {
@@ -319,359 +194,100 @@ export function dokterPraktik(db: DB, poliId: string, cabangId: string): Dokter 
   return dokterPoli[0]
 }
 
-function suaraPanggilan(kode: string, poliNama: string) {
-  if (!data.pengaturan.suaraPanggilan) return
+/* ---------------------------------------------------------------- antrian */
+
+export async function ambilNomor(input: {
+  poliId: string; cabangId: string; dokterId?: string; nama: string; telepon: string
+  alasan: string; prioritas: Prioritas; pasienId?: string
+}): Promise<Antrian> {
+  const antrian = await post<Antrian>('/antrian', input, true)
+  await muatSemua()
+  return antrian
+}
+
+export async function panggilAntrian(id: string) {
+  const hasil = await post<Antrian>(`/antrian/${id}/panggil`)
+  await muatSemua()
+  return hasil
+}
+
+export async function panggilBerikutnya(poliId: string, cabangId: string): Promise<Antrian | null> {
   try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-    const ctx = new AudioCtx()
-    const os = ctx.createOscillator()
-    const gain = ctx.createGain()
-    os.type = 'sine'
-    os.frequency.setValueAtTime(880, ctx.currentTime)
-    os.frequency.setValueAtTime(1180, ctx.currentTime + 0.22)
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.04)
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.75)
-    os.connect(gain)
-    gain.connect(ctx.destination)
-    os.start()
-    os.stop(ctx.currentTime + 0.8)
-    setTimeout(() => ctx.close(), 1200)
+    const hasil = await post<Antrian>('/antrian/panggil-berikutnya', { poliId, cabangId }, true)
+    await muatSemua()
+    return hasil
   } catch {
-    /* audio tidak tersedia */
-  }
-  try {
-    const u = new SpeechSynthesisUtterance(`Nomor antrian ${kode.split('-').join(' ')}. Silakan menuju ${poliNama}.`)
-    u.lang = 'id-ID'
-    u.rate = 0.92
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.speak(u)
-  } catch {
-    /* sintesis suara tidak tersedia */
+    return null
   }
 }
 
-export function panggilAntrian(id: string): Antrian | null {
-  const target = data.antrian.find((a) => a.id === id)
-  if (!target) return null
-  const poli = cariPoli(data, target.poliId)
-  const waktu = new Date().toISOString()
-  ubah((db) => ({
-    ...db,
-    antrian: db.antrian.map((a) => (a.id === id ? { ...a, status: 'dipanggil' as StatusAntrian, dipanggilPada: waktu } : a)),
-  }), { senyap: true })
-  catat('PANGGIL_ANTRIAN', 'Antrian', `Memanggil ${target.kode} ke ${poli?.ruang ?? '-'}`)
-  beriNotifikasi({
-    judul: `Nomor ${target.kode} dipanggil`,
-    pesan: `Silakan menuju ${poli?.nama ?? 'poli'} — ${poli?.ruang ?? ''}.`,
-    tipe: 'panggilan',
-    untukPenggunaId: target.pasienId || undefined,
-    tautan: `/status?kode=${target.kode}`,
-  })
-  suaraPanggilan(target.kode, poli?.nama ?? 'poli')
-  return { ...target, status: 'dipanggil', dipanggilPada: waktu }
+export async function ubahStatusAntrian(id: string, status: StatusAntrian, catatan?: string) {
+  await patch(`/antrian/${id}/status`, { status, catatan })
+  await muatSemua()
 }
 
-export function panggilBerikutnya(poliId: string, cabangId: string): Antrian | null {
-  const berikut = antreanPoli(data, poliId, cabangId).find((a) => a.status === 'menunggu')
-  if (!berikut) return null
-  return panggilAntrian(berikut.id)
+export async function ubahPrioritas(id: string, prioritas: Prioritas) {
+  await patch(`/antrian/${id}/prioritas`, { prioritas })
+  await muatSemua()
 }
 
-export function ubahStatusAntrian(id: string, status: StatusAntrian, catatan?: string) {
-  const waktu = new Date().toISOString()
-  const target = data.antrian.find((a) => a.id === id)
-  if (!target) return
-  ubah((db) => ({
-    ...db,
-    antrian: db.antrian.map((a) => {
-      if (a.id !== id) return a
-      const baru: Antrian = { ...a, status }
-      if (status === 'dilayani') baru.dilayaniPada = waktu
-      if (status === 'selesai') {
-        baru.selesaiPada = waktu
-        baru.dilayaniPada = a.dilayaniPada ?? waktu
-        baru.dipanggilPada = a.dipanggilPada ?? waktu
-      }
-      if (catatan !== undefined) baru.catatan = catatan
-      return baru
-    }),
-  }), { senyap: true })
-  catat('UBAH_STATUS', 'Antrian', `${target.kode} -> ${status}${catatan ? ` (${catatan})` : ''}`)
+export async function pindahkanCabang(id: string, cabangId: string) {
+  await patch(`/antrian/${id}/cabang`, { cabangId })
+  await muatSemua()
 }
 
-export function ubahPrioritas(id: string, prioritas: Prioritas) {
-  const target = data.antrian.find((a) => a.id === id)
-  if (!target) return
-  ubah((db) => ({
-    ...db,
-    antrian: db.antrian.map((a) => (a.id === id ? { ...a, prioritas } : a)),
-  }), { senyap: true })
-  catat('UBAH_PRIORITAS', 'Antrian', `${target.kode} diubah ke prioritas ${prioritas}`)
-  beriNotifikasi({ judul: 'Prioritas diperbarui', pesan: `Antrian ${target.kode} kini berstatus prioritas ${prioritas}.`, tipe: 'peringatan', untukPenggunaId: target.pasienId || undefined })
-}
-
-export function pindahkanCabang(id: string, cabangId: string) {
-  const target = data.antrian.find((a) => a.id === id)
-  if (!target) return
-  const nomor = nomorBaru(data, target.poliId, cabangId)
-  const poli = cariPoli(data, target.poliId)
-  ubah((db) => ({
-    ...db,
-    antrian: db.antrian.map((a) => (a.id === id ? { ...a, cabangId, nomor, kode: `${poli?.kode ?? 'AN'}-${pad2(nomor)}` } : a)),
-  }), { senyap: true })
-  catat('PINDAH_CABANG', 'Antrian', `${target.kode} dipindahkan ke cabang ${cariCabang(data, cabangId)?.nama}`)
-}
-
-export function resetAntrianHarian(cabangId: string) {
-  ubah((db) => ({ ...db, antrian: db.antrian.filter((a) => a.cabangId !== cabangId || a.ambilPada.slice(0, 10) !== hariIniISO()) }))
-  catat('RESET_ANTRIAN', 'Antrian', `Mereset antrian harian cabang ${cariCabang(data, cabangId)?.nama}`)
+export async function resetAntrianHarian(cabangId: string) {
+  await post('/antrian/reset-harian', { cabangId })
+  await muatSemua()
 }
 
 /* --------------------------------------------------------------- janji temu */
 
-export function buatJanjiTemu(input: { pasienId: string; dokterId: string; tanggal: string; jam: string; alasan: string; cabangId: string }): JanjiTemu {
-  const pasien = data.pengguna.find((p) => p.id === input.pasienId)
-  const dokter = cariDokter(data, input.dokterId)!
-  const baru: JanjiTemu = {
-    id: uid('jt'),
-    kode: `JT-${Math.floor(1000 + Math.random() * 8999)}`,
-    pasienId: input.pasienId,
-    pasienNama: pasien?.nama ?? 'Pasien',
-    dokterId: dokter.id,
-    poliId: dokter.poliId,
-    cabangId: input.cabangId,
-    tanggal: input.tanggal,
-    jam: input.jam,
-    alasan: input.alasan,
-    status: 'menunggu',
-    dibuatPada: new Date().toISOString(),
-  }
-  ubah((db) => ({ ...db, janjiTemu: [baru, ...db.janjiTemu] }), { senyap: true })
-  catat('BUAT_JANJI_TEMU', 'Janji Temu', `${baru.kode} dengan ${dokter.nama} pada ${baru.tanggal} ${baru.jam}`)
-  beriNotifikasi({ judul: 'Janji temu dibuat', pesan: `Janji temu ${baru.kode} bersama ${dokter.nama} pada ${baru.tanggal} pukul ${baru.jam}.`, tipe: 'sukses', untukPenggunaId: baru.pasienId })
-  return baru
+export async function buatJanjiTemu(input: { pasienId: string; dokterId: string; tanggal: string; jam: string; alasan: string; cabangId: string }): Promise<JanjiTemu> {
+  const jt = await post<JanjiTemu>('/janji-temu', input)
+  await muatSemua()
+  return jt
 }
 
-export function statusJanjiTemu(id: string, status: JanjiTemu['status']) {
-  const target = data.janjiTemu.find((j) => j.id === id)
-  if (!target) return
-  ubah((db) => ({
-    ...db,
-    janjiTemu: db.janjiTemu.map((j) => (j.id === id ? { ...j, status } : j)),
-  }), { senyap: true })
-  catat('UBAH_JANJI_TEMU', 'Janji Temu', `${target.kode} -> ${status}`)
-  beriNotifikasi({ judul: `Janji temu ${status}`, pesan: `Janji temu ${target.kode} Anda telah ${status}.`, tipe: status === 'batal' ? 'peringatan' : 'info', untukPenggunaId: target.pasienId })
+export async function statusJanjiTemu(id: string, status: JanjiTemu['status']) {
+  await patch(`/janji-temu/${id}/status`, { status })
+  await muatSemua()
 }
 
-export function janjiTemuKeAntrian(id: string): Antrian | null {
-  const jt = data.janjiTemu.find((j) => j.id === id)
-  if (!jt) return null
-  const antrian = ambilNomor({
-    poliId: jt.poliId,
-    cabangId: jt.cabangId,
-    dokterId: jt.dokterId,
-    nama: jt.pasienNama,
-    telepon: data.pengguna.find((p) => p.id === jt.pasienId)?.telepon ?? '-',
-    alasan: jt.alasan,
-    prioritas: 'reguler',
-    pasienId: jt.pasienId,
-  })
-  ubah((db) => ({
-    ...db,
-    janjiTemu: db.janjiTemu.map((j) => (j.id === id ? { ...j, status: 'selesai' as const, antrianId: antrian.id } : j)),
-  }), { senyap: true })
+export async function janjiTemuKeAntrian(id: string): Promise<Antrian> {
+  const antrian = await post<Antrian>(`/janji-temu/${id}/ke-antrian`)
+  await muatSemua()
   return antrian
 }
 
 /* ------------------------------------------------------------- master data */
 
-function ubahPoli(poli: Poli, aksi: 'TAMBAH' | 'UBAH' | 'HAPUS') {
-  ubah((db) => ({
-    ...db,
-    poli: aksi === 'TAMBAH' ? [...db.poli, poli] : aksi === 'UBAH' ? db.poli.map((p) => (p.id === poli.id ? poli : p)) : db.poli.filter((p) => p.id !== poli.id),
-  }))
-  catat(`${aksi}_POLI`, 'Poli', `${aksi === 'HAPUS' ? 'Menghapus' : aksi === 'UBAH' ? 'Mengubah' : 'Menambah'} poli ${poli.nama}`)
-}
+export async function simpanPoli(poli: Poli) { await post('/poli', poli); await muatSemua() }
+export async function hapusPoli(id: string) { await del(`/poli/${id}`); await muatSemua() }
 
-export function simpanPoli(poli: Poli) {
-  const ada = data.poli.some((p) => p.id === poli.id)
-  ubahPoli(poli, ada ? 'UBAH' : 'TAMBAH')
-}
-export function hapusPoli(id: string) {
-  const p = data.poli.find((x) => x.id === id)
-  if (!p) return
-  ubahPoli(p, 'HAPUS')
-}
+export async function simpanDokter(dokter: Dokter) { await post('/dokter', dokter); await muatSemua() }
+export async function hapusDokter(id: string) { await del(`/dokter/${id}`); await muatSemua() }
 
-function ubahDokter(dokter: Dokter, aksi: 'TAMBAH' | 'UBAH' | 'HAPUS') {
-  ubah((db) => ({
-    ...db,
-    dokter: aksi === 'TAMBAH' ? [...db.dokter, dokter] : aksi === 'UBAH' ? db.dokter.map((d) => (d.id === dokter.id ? dokter : d)) : db.dokter.filter((d) => d.id !== dokter.id),
-  }))
-  catat(`${aksi}_DOKTER`, 'Dokter', `${aksi === 'HAPUS' ? 'Menghapus' : aksi === 'UBAH' ? 'Mengubah' : 'Menambah'} dokter ${dokter.nama}`)
-}
+export async function simpanJadwal(jadwal: Jadwal) { await post('/jadwal', jadwal); await muatSemua() }
+export async function hapusJadwal(id: string) { await del(`/jadwal/${id}`); await muatSemua() }
 
-export function simpanDokter(dokter: Dokter) {
-  const ada = data.dokter.some((d) => d.id === dokter.id)
-  ubahDokter(dokter, ada ? 'UBAH' : 'TAMBAH')
-}
-export function hapusDokter(id: string) {
-  const d = data.dokter.find((x) => x.id === id)
-  if (!d) return
-  ubahDokter(d, 'HAPUS')
-}
-
-export function simpanJadwal(jadwal: Jadwal) {
-  const ada = data.jadwal.some((j) => j.id === jadwal.id)
-  ubah((db) => ({
-    ...db,
-    jadwal: ada ? db.jadwal.map((j) => (j.id === jadwal.id ? jadwal : j)) : [...db.jadwal, jadwal],
-  }))
-  catat(ada ? 'UBAH_JADWAL' : 'TAMBAH_JADWAL', 'Jadwal', `${cariDokter(data, jadwal.dokterId)?.nama} hari ${jadwal.hari} ${jadwal.mulai}-${jadwal.selesai}`)
-}
-export function hapusJadwal(id: string) {
-  ubah((db) => ({ ...db, jadwal: db.jadwal.filter((j) => j.id !== id) }))
-  catat('HAPUS_JADWAL', 'Jadwal', 'Menghapus satu slot jadwal praktik')
-}
-
-export function simpanCabang(cabang: Cabang) {
-  const ada = data.cabang.some((c) => c.id === cabang.id)
-  ubah((db) => ({
-    ...db,
-    cabang: ada ? db.cabang.map((c) => (c.id === cabang.id ? cabang : c)) : [...db.cabang, cabang],
-  }))
-  catat(ada ? 'UBAH_CABANG' : 'TAMBAH_CABANG', 'Cabang', cabang.nama)
-}
-export function hapusCabang(id: string) {
-  ubah((db) => ({ ...db, cabang: db.cabang.filter((c) => c.id !== id) }))
-  catat('HAPUS_CABANG', 'Cabang', `Menghapus cabang ${cariCabang(data, id)?.nama}`)
-}
+export async function simpanCabang(cabang: Cabang) { await post('/cabang', cabang); await muatSemua() }
+export async function hapusCabang(id: string) { await del(`/cabang/${id}`); await muatSemua() }
 
 /* --------------------------------------------------------------- pengguna */
 
-export function simpanPengguna(p: Pengguna) {
-  const ada = data.pengguna.some((x) => x.id === p.id)
-  ubah((db) => ({
-    ...db,
-    pengguna: ada ? db.pengguna.map((x) => (x.id === p.id ? p : x)) : [...db.pengguna, p],
-  }), { senyap: true })
-  catat(ada ? 'UBAH_PENGGUNA' : 'TAMBAH_PENGGUNA', 'Pengguna', `${p.nama} (${p.peran})`)
-}
-
-export function hapusPengguna(id: string) {
-  const p = data.pengguna.find((x) => x.id === id)
-  if (!p) return
-  ubah((db) => ({ ...db, pengguna: db.pengguna.filter((x) => x.id !== id) }), { senyap: true })
-  catat('HAPUS_PENGGUNA', 'Pengguna', `Menghapus akun ${p.nama}`)
-}
-
-export function ubahPeran(penggunaId: string, peran: Peran) {
-  const p = data.pengguna.find((x) => x.id === penggunaId)
-  if (!p) return
-  simpanPengguna({ ...p, peran, izinTambahan: [], izinDicabut: [] })
-  catat('UBAH_PERAN', 'Pengguna', `Peran ${p.nama} diubah menjadi ${peran}`)
-}
-
-export function ubahIzin(penggunaId: string, izin: string, aktif: boolean) {
-  const p = data.pengguna.find((x) => x.id === penggunaId)
-  if (!p) return
-  const bawaan = IZIN_BAWAAN[p.peran].includes(izin as never)
-  let tambahan = p.izinTambahan.filter((i) => i !== izin)
-  let dicabut = p.izinDicabut.filter((i) => i !== izin)
-  if (aktif) {
-    if (!bawaan) tambahan = [...tambahan, izin]
-  } else if (bawaan) {
-    dicabut = [...dicabut, izin]
-  }
-  simpanPengguna({ ...p, izinTambahan: tambahan, izinDicabut: dicabut })
-  catat('UBAH_IZIN', 'Perizinan', `${p.nama}: ${izin} -> ${aktif ? 'diizinkan' : 'dicabut'}`)
-}
+export async function simpanPengguna(p: Pengguna) { await post('/pengguna', p); await muatSemua() }
+export async function hapusPengguna(id: string) { await del(`/pengguna/${id}`); await muatSemua() }
+export async function ubahPeran(penggunaId: string, peran: Peran) { await patch(`/pengguna/${penggunaId}/peran`, { peran }); await muatSemua() }
+export async function ubahIzin(penggunaId: string, izin: string, aktif: boolean) { await patch(`/pengguna/${penggunaId}/izin`, { izin, aktif }); await muatSemua() }
 
 /* ------------------------------------------------------------ notifikasi */
 
-export function tandaiDibaca(id?: string) {
-  ubah((db) => ({
-    ...db,
-    notifikasi: db.notifikasi.map((n) => (id === undefined || n.id === id ? { ...n, dibaca: true } : n)),
-  }), { senyap: true })
-}
-
-export function hapusNotifikasi(id: string) {
-  ubah((db) => ({ ...db, notifikasi: db.notifikasi.filter((n) => n.id !== id) }), { senyap: true })
-}
-
-export function kirimPengumuman(judul: string, pesan: string, untukPenggunaId?: string) {
-  beriNotifikasi({ judul, pesan, tipe: 'info', untukPenggunaId })
-  catat('KIRIM_NOTIFIKASI', 'Notifikasi', `${judul} -> ${untukPenggunaId ? 'perorangan' : 'seluruh pasien'}`)
-}
+export async function tandaiDibaca(id?: string) { await patch('/notifikasi/dibaca', { id }, true); await muatSemua() }
+export async function hapusNotifikasi(id: string) { await del(`/notifikasi/${id}`, true); await muatSemua() }
+export async function kirimPengumuman(judul: string, pesan: string, untukPenggunaId?: string) { await post('/notifikasi/pengumuman', { judul, pesan, untukPenggunaId }); await muatSemua() }
 
 /* ------------------------------------------------------------- pengaturan */
 
-export function simpanPengaturan(p: Partial<Pengaturan>) {
-  ubah((db) => ({ ...db, pengaturan: { ...db.pengaturan, ...p } }), { senyap: true })
-  catat('UBAH_PENGATURAN', 'Sistem', `Memperbarui pengaturan: ${Object.keys(p).join(', ')}`)
-}
-
-export function resetSistem() {
-  const baru = seedDB()
-  ubah(() => baru)
-  catat('RESET_SISTEM', 'Sistem', 'Mengembalikan seluruh data ke kondisi awal')
-}
-
-/* --------------------------------------------------------- simulasi realtime */
-
-export function simulasiLangkah() {
-  if (!data.pengaturan.modeSimulasi) return
-  const poliTerbuka = data.poli.filter((p) => p.aktif && p.kode !== 'IGD')
-  if (!poliTerbuka.length) return
-  const acakPoli = poliTerbuka[Math.floor(Math.random() * poliTerbuka.length)]
-  const acakCabang = data.cabang[Math.floor(Math.random() * Math.min(2, data.cabang.length))]
-
-  if (Math.random() < 0.55) {
-    const namaDepan = ['Raka', 'Nadia', 'Yusuf', 'Kirana', 'Bram', 'Salsa', 'Reza', 'Alia', 'Galih', 'Nabila']
-    const namaBelakang = ['Manggala', 'Pertiwi', 'Halim', 'Wibowo', 'Kusnadi', 'Saputri', 'Hakim']
-    const nama = `${namaDepan[Math.floor(Math.random() * namaDepan.length)]} ${namaBelakang[Math.floor(Math.random() * namaBelakang.length)]}`
-    const nomor = nomorBaru(data, acakPoli.id, acakCabang.id)
-    const baru: Antrian = {
-      id: uid('antrian'),
-      kode: `${acakPoli.kode}-${pad2(nomor)}`,
-      nomor,
-      poliId: acakPoli.id,
-      dokterId: dokterPraktik(data, acakPoli.id, acakCabang.id)?.id ?? data.dokter[0].id,
-      cabangId: acakCabang.id,
-      pasienId: '',
-      pasienNama: nama,
-      telepon: `08${Math.floor(Math.random() * 90) + 10}-${Math.floor(1000 + Math.random() * 8999)}-${Math.floor(1000 + Math.random() * 8999)}`,
-      alasan: 'Datang langsung (walk-in)',
-      prioritas: Math.random() < 0.16 ? 'lansia' : Math.random() < 0.08 ? 'darurat' : 'reguler',
-      status: 'menunggu',
-      ambilPada: new Date().toISOString(),
-      estimasiAwal: estimasiDasar(data, acakPoli.id, acakCabang.id),
-    }
-    ubah((db) => ({ ...db, antrian: [...db.antrian, baru] }), { senyap: true })
-    return
-  }
-
-  const menunggu = data.antrian.filter((a) => a.status === 'menunggu' && a.cabangId === acakCabang.id)
-  if (menunggu.length > 2 && Math.random() < 0.5) {
-    const terdepan = [...menunggu].sort(urutAntrian)[0]
-    const sekarang = jam().slice(0, 2)
-    void sekarang
-    ubah((db) => ({
-      ...db,
-      antrian: db.antrian.map((a) =>
-        a.id === terdepan.id
-          ? { ...a, status: 'dipanggil' as StatusAntrian, dipanggilPada: new Date().toISOString() }
-          : a.status === 'dipanggil' && Date.now() - new Date(a.dipanggilPada ?? 0).getTime() > 90000
-            ? { ...a, status: 'dilayani' as StatusAntrian, dilayaniPada: new Date().toISOString() }
-            : a,
-      ),
-    }), { senyap: true })
-  }
-}
-
-export function mulaiSimulasi(): () => void {
-  const t = window.setInterval(simulasiLangkah, 14000)
-  return () => window.clearInterval(t)
-}
+export async function simpanPengaturan(p: Partial<Pengaturan>) { await patch('/pengaturan', p); await muatSemua() }
+export async function resetSistem() { await post('/pengaturan/reset-sistem'); await muatSemua() }
