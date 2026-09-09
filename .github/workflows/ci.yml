@@ -45,6 +45,22 @@ jobs:
       - run: npx tsc -p tsconfig.test.json --noEmit
       - run: npm test
 
+      - name: Ensure pg_dump/pg_restore are available
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Backup & restore (proves the PRD Fase 7 "restore terbukti berhasil" gate, not just the script existing)
+        run: |
+          npm run backup
+          npm run restore:check
+
+      - name: Build & smoke-test the production artifact (not just the dev/tsx-watch path)
+        run: |
+          npm run build
+          node dist/index.js &
+          for i in $(seq 1 15); do curl -sf http://localhost:4010/api/health && break || sleep 1; done
+          curl -sf http://localhost:4010/api/health | grep -q '"db":"tersambung"'
+          kill %1
+
   frontend:
     name: Frontend (typecheck + test + build)
     runs-on: ubuntu-latest
